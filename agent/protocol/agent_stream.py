@@ -147,6 +147,35 @@ def _truncate_reasoning_for_storage(text: str) -> str:
     return head + _REASONING_TRUNCATE_MARKER.format(omitted=omitted) + tail
 
 
+def _layout_native_blocks(layout: list, text: str, tool_use_blocks: list) -> list:
+    """Assistant content in the order Claude produced it.
+
+    Signed thinking must go back unmodified and in place, or the next request
+    of the tool loop runs without the model's earlier reasoning. The agent's
+    own text and tool calls take the slots of the provider's text and tool_use
+    blocks; several text blocks collapse into the first slot.
+    """
+    content = []
+    text_placed = tools_placed = False
+    for block in layout:
+        btype = block.get("type")
+        if btype in ("thinking", "redacted_thinking"):
+            content.append(dict(block))
+        elif btype == "text" and not text_placed:
+            if text:
+                content.append({"type": "text", "text": text})
+            text_placed = True
+        elif btype == "tool_use" and not tools_placed:
+            content.extend(tool_use_blocks)
+            tools_placed = True
+    if text and not text_placed:
+        first_tool = next((i for i, b in enumerate(content) if b.get("type") == "tool_use"), len(content))
+        content.insert(first_tool, {"type": "text", "text": text})
+    if not tools_placed:
+        content.extend(tool_use_blocks)
+    return content
+
+
 def _cache_hit_tokens(usage: Dict[str, Any]) -> int:
     """Prompt tokens served from the provider's prefix cache.
 
@@ -456,6 +485,20 @@ class AgentStreamExecutor:
             f"{body}"
         )
 
+    @staticmethod
+    def _unrun_tool_result(tool_call: Dict, halted_by: str) -> Dict:
+        """Close a tool_use that never ran because a steer or cancel stopped the turn."""
+        if halted_by == "steer":
+            content = "Skipped because the user redirected the active task."
+        else:
+            content = "Error: Tool execution was interrupted"
+        return {
+            "type": "tool_result",
+            "tool_use_id": tool_call["id"],
+            "content": content,
+            "is_error": True,
+        }
+
     def _append_steering(
         self,
         updates: List[str],
@@ -467,12 +510,7 @@ class AgentStreamExecutor:
             return
         blocks = content_blocks if content_blocks is not None else []
         for tool_call in pending_tool_calls or []:
-            blocks.append({
-                "type": "tool_result",
-                "tool_use_id": tool_call["id"],
-                "content": "Skipped because the user redirected the active task.",
-                "is_error": True,
-            })
+            blocks.append(self._unrun_tool_result(tool_call, "steer"))
         blocks.append({"type": "text", "text": self._steering_text(updates)})
         if content_blocks is None:
             self.messages.append({"role": "user", "content": blocks})
@@ -1210,17 +1248,26 @@ class AgentStreamExecutor:
 
                 try:
                     already_run = self._run_parallel_calls(tool_calls)
-                    for tool_index, tool_call in enumerate(tool_calls):
-                        # Honour cancel between tool invocations within the same turn
-                        self._check_cancelled()
-                        steering_updates = self._drain_steering()
-                        if steering_updates:
-                            self._append_steering(
-                                steering_updates,
-                                pending_tool_calls=tool_calls[tool_index:],
-                                content_blocks=tool_result_blocks,
-                            )
-                            break
+                    # A steer or cancel only stops calls that have not run yet.
+                    # Calls that already ran in parallel have done their work,
+                    # so they keep their real result even after the stop.
+                    halted_by = None
+                    steering_updates = []
+                    for tool_call in tool_calls:
+                        if tool_call["id"] not in already_run:
+                            if halted_by is None:
+                                try:
+                                    self._check_cancelled()
+                                except AgentCancelledError:
+                                    halted_by = "cancel"
+                                else:
+                                    steering_updates = self._drain_steering()
+                                    if steering_updates:
+                                        halted_by = "steer"
+                            if halted_by is not None:
+                                tool_result_blocks.append(
+                                    self._unrun_tool_result(tool_call, halted_by))
+                                continue
                         if tool_call["id"] in already_run:
                             result = already_run[tool_call["id"]]
                         else:
@@ -1304,6 +1351,11 @@ class AgentStreamExecutor:
                             tool_result_block["is_error"] = True
                         
                         tool_result_blocks.append(tool_result_block)
+
+                    if halted_by == "steer":
+                        self._append_steering(steering_updates, content_blocks=tool_result_blocks)
+                    elif halted_by == "cancel":
+                        raise AgentCancelledError("agent cancelled by user")
                 
                 finally:
                     # CRITICAL: Always add tool_result to maintain message history integrity
@@ -1743,6 +1795,7 @@ class AgentStreamExecutor:
         full_reasoning = ""
         tool_calls_buffer = {}  # {index: {id, name, arguments}}
         gemini_raw_parts = None  # Preserve Gemini thoughtSignature for round-trip
+        claude_blocks = None  # Claude's block layout with signed thinking, for round-trip
         stop_reason = None  # Track why the stream stopped
         stream_usage = None  # Real token usage from the provider, if reported
 
@@ -1911,6 +1964,8 @@ class AgentStreamExecutor:
                         gemini_raw_parts = delta["_gemini_raw_parts"]
                     elif isinstance(choice, dict) and choice.get("_gemini_raw_parts"):
                         gemini_raw_parts = choice["_gemini_raw_parts"]
+                    if delta.get("_claude_content_blocks"):
+                        claude_blocks = delta["_claude_content_blocks"]
 
             _think_tail_out = self._flush_think_stream()
             if _think_tail_out:
@@ -2217,34 +2272,38 @@ class AgentStreamExecutor:
         
         # Add assistant message to history (Claude format uses content blocks)
         assistant_msg = {"role": "assistant", "content": []}
+        tool_use_blocks = [
+            {
+                "type": "tool_use",
+                "id": tc.get("id", ""),
+                "name": tc.get("name", ""),
+                "input": tc.get("arguments", {})
+            }
+            for tc in tool_calls or []
+        ]
 
-        if full_reasoning:
-            stored_reasoning = _truncate_reasoning_for_storage(full_reasoning)
-            if len(stored_reasoning) < len(full_reasoning):
-                logger.info(
-                    f"[reasoning] truncated for storage: "
-                    f"{len(full_reasoning)} -> {len(stored_reasoning)} chars"
-                )
-            assistant_msg["content"].append({
-                "type": "thinking",
-                "thinking": stored_reasoning
-            })
-
-        if full_content:
-            assistant_msg["content"].append({
-                "type": "text",
-                "text": full_content
-            })
-
-        # Add tool_use blocks if present
-        if tool_calls:
-            for tc in tool_calls:
+        if claude_blocks:
+            assistant_msg["content"] = _layout_native_blocks(claude_blocks, full_content, tool_use_blocks)
+        else:
+            if full_reasoning:
+                stored_reasoning = _truncate_reasoning_for_storage(full_reasoning)
+                if len(stored_reasoning) < len(full_reasoning):
+                    logger.info(
+                        f"[reasoning] truncated for storage: "
+                        f"{len(full_reasoning)} -> {len(stored_reasoning)} chars"
+                    )
                 assistant_msg["content"].append({
-                    "type": "tool_use",
-                    "id": tc.get("id", ""),
-                    "name": tc.get("name", ""),
-                    "input": tc.get("arguments", {})
+                    "type": "thinking",
+                    "thinking": stored_reasoning
                 })
+
+            if full_content:
+                assistant_msg["content"].append({
+                    "type": "text",
+                    "text": full_content
+                })
+
+            assistant_msg["content"].extend(tool_use_blocks)
         
         if gemini_raw_parts:
             assistant_msg["_gemini_raw_parts"] = gemini_raw_parts
