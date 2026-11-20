@@ -4,8 +4,17 @@ import threading
 from pathlib import Path
 from typing import Dict
 from agent.tools.base_tool import BaseTool
+from common.deployment import is_mobile
 from common.log import logger
 from config import conf
+
+# Tools that need a shell or a local browser, neither of which the mobile app
+# can provide.
+_MOBILE_UNAVAILABLE_TOOLS = frozenset({"bash", "browser"})
+
+
+def _available_here(tool_name: str) -> bool:
+    return not (is_mobile() and tool_name in _MOBILE_UNAVAILABLE_TOOLS)
 
 
 def _normalize_mcp_configs(raw) -> list:
@@ -176,6 +185,9 @@ class ToolManager:
                                     # Create a temporary instance to get the name
                                     temp_instance = cls()
                                     tool_name = temp_instance.name
+                                    if not _available_here(tool_name):
+                                        logger.debug(f"Skipped tool {tool_name} (unavailable in this deployment)")
+                                        continue
                                     # Store the class, not the instance
                                     self.tool_classes[tool_name] = cls
                                     logger.debug(f"Loaded tool: {tool_name} from class {class_name}")
@@ -240,6 +252,8 @@ class ToolManager:
                                 # Create a temporary instance to get the name
                                 temp_instance = cls()
                                 tool_name = temp_instance.name
+                                if not _available_here(tool_name):
+                                    continue
                                 # Store the class, not the instance
                                 self.tool_classes[tool_name] = cls
                             except ImportError as e:
@@ -797,12 +811,18 @@ class ToolManager:
         """
         tool_class = self.tool_classes.get(name)
         if tool_class:
-            # Create a new instance
-            tool_instance = tool_class()
-
-            # Apply configuration if available
-            if hasattr(self, 'tool_configs') and name in self.tool_configs:
-                tool_instance.config = self.tool_configs[name]
+            # Bash needs its selected backend before rendering its description.
+            # Read the instance-wide shell value live: managers may predate a save.
+            if name == "bash":
+                tool_config = dict(getattr(self, "tool_configs", {}).get(name) or {})
+                live_bash = (conf().get("tools") or {}).get("bash") or {}
+                if "windows_shell" in live_bash:
+                    tool_config["windows_shell"] = live_bash["windows_shell"]
+                tool_instance = tool_class(tool_config)
+            else:
+                tool_instance = tool_class()
+                if hasattr(self, 'tool_configs') and name in self.tool_configs:
+                    tool_instance.config = self.tool_configs[name]
 
             return tool_instance
 
@@ -822,7 +842,7 @@ class ToolManager:
         result = {}
         for name, tool_class in self.tool_classes.items():
             # Create a temporary instance to get schema
-            temp_instance = tool_class()
+            temp_instance = self.create_tool(name) if name == "bash" else tool_class()
             result[name] = {
                 "description": temp_instance.description,
                 "parameters": temp_instance.get_json_schema()

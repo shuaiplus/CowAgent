@@ -686,10 +686,14 @@ class ModelsHandler:
         "cowagent":  [
             "deepseek-v4.1-flash",
             "MiniMax-M3.1-Flash",
-            "gpt-6-luna",
+            "gpt-6.2-sol",
+            "gpt-6.2-astra",
             "gpt-6.1-terra",
             "gpt-6.1-sol",
+            "gpt-6-luna",
             "gpt-6-astra",
+            "claude-haiku-5-5",
+            "claude-fable-5-2",
             "claude-fable-5-1",
             "gemini-4-argon",
             "glm-5.3-flash",
@@ -733,7 +737,7 @@ class ModelsHandler:
     # The skill itself maps either form to the real vendor endpoint, so the
     # hint is purely cosmetic.
     _IMAGE_PROVIDER_MODELS = {
-        "openai":    ["gpt-image-2.5-flare", "gpt-image-2.5-sunburst", "gpt-image-2", "gpt-image-1"],
+        "openai":    ["gpt-image-2.6-flare", "gpt-image-2.6-sunburst", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst", "gpt-image-2", "gpt-image-1"],
         "gemini": [
             {"value": "gemini-3.1-flash-image-preview", "hint": "Nano Banana 2"},
             {"value": "gemini-3-pro-image-preview",     "hint": "Nano Banana Pro"},
@@ -743,6 +747,9 @@ class ModelsHandler:
         "dashscope": ["qwen-image-2.0-pro", "qwen-image-2.0"],
         "minimax":   ["image-01"],
         "cowagent": [
+            "gpt-image-2.6-flare",
+            "gpt-image-2.6-sunburst",
+            {"value": "gemini-nano-banana-2.1", "hint": "Nano Banana 2.1"},
             "gpt-image-2.5-flare",
             "gpt-image-2.5-sunburst",
             {"value": "gemini-3.1-flash-image", "hint": "Nano Banana 2"},
@@ -751,6 +758,9 @@ class ModelsHandler:
             "seedream-5.0-lite",
         ],
         "linkai": [
+            "gpt-image-2.6-flare",
+            "gpt-image-2.6-sunburst",
+            {"value": "gemini-nano-banana-2.1", "hint": "Nano Banana 2.1"},
             "gpt-image-2.5-flare",
             "gpt-image-2.5-sunburst",
             "gpt-image-2",
@@ -1383,13 +1393,13 @@ class ModelsHandler:
     # provider-card id to the script's per-provider DEFAULT_MODEL so the
     # hint matches what the runtime would actually request.
     _IMAGE_AUTO_ORDER = [
-        ("openai",    "gpt-image-2.5-flare"),
+        ("openai",    "gpt-image-2.6-flare"),
         ("gemini",    "gemini-3.1-flash-image-preview"),  # nano-banana-2
         ("doubao",    "seedream-5.0-lite"),
         ("dashscope", "qwen-image-2.0"),
         ("minimax",   "image-01"),
-        ("cowagent",  "gpt-image-2.5-flare"),
-        ("linkai",    "gpt-image-2.5-flare"),
+        ("cowagent",  "gpt-image-2.6-flare"),
+        ("linkai",    "gpt-image-2.6-flare"),
     ]
 
     @classmethod
@@ -1487,7 +1497,7 @@ class ModelsHandler:
 
     # Canonical search provider order. Mirrors PROVIDER_ORDER in
     # agent/tools/web_search/web_search.py — keep them in sync.
-    _SEARCH_PROVIDERS = ("deepseek", "bocha", "qianfan", "zhipu", "cowagent", "linkai", "anysearch", "serply", "tavily", "outcrawl", "firecrawl", "specstream", "olostep", "searxng", "keenable")
+    _SEARCH_PROVIDERS = ("deepseek", "bocha", "qianfan", "zhipu", "cowagent", "linkai", "anysearch", "serply", "tavily", "outcrawl", "firecrawl", "specstream", "olostep", "searchapi", "searxng", "keenable")
 
     _SEARCH_PROVIDER_LABELS = {
         "bocha":   {"zh": "博查", "en": "Bocha"},
@@ -1503,6 +1513,7 @@ class ModelsHandler:
         "firecrawl": {"zh": "Firecrawl", "en": "Firecrawl"},
         "specstream": {"zh": "SpecStream", "en": "SpecStream"},
         "olostep": {"zh": "Olostep", "en": "Olostep"},
+        "searchapi": {"zh": "SearchApi", "en": "SearchApi"},
         "searxng": {"zh": "SearXNG", "en": "SearXNG"},
         "keenable": {"zh": "Keenable", "en": "Keenable"},
     }
@@ -1559,6 +1570,11 @@ class ModelsHandler:
             block = tools_cfg.get("web_search") or {} if isinstance(tools_cfg, dict) else {}
             return (block.get("olostep_api_key") if isinstance(block, dict) else "") or os.environ.get(
                 "OLOSTEP_API_KEY", "")
+        if provider == "searchapi":
+            tools_cfg = local_config.get("tools") or {}
+            block = tools_cfg.get("web_search") or {} if isinstance(tools_cfg, dict) else {}
+            return (block.get("searchapi_api_key") if isinstance(block, dict) else "") or os.environ.get(
+                "SEARCHAPI_API_KEY", "")
         if provider == "keenable":
             tools_cfg = local_config.get("tools") or {}
             block = tools_cfg.get("web_search") or {} if isinstance(tools_cfg, dict) else {}
@@ -1613,7 +1629,7 @@ class ModelsHandler:
                 # to surface.
                 # Lets the frontend badge "匿名/anonymous" only in anonymous mode.
                 "anonymous": pid in ("anysearch", "keenable") and ok and not raw_key,
-                "needs_dedicated_key": pid in ("bocha", "anysearch", "serply", "tavily", "outcrawl", "firecrawl", "specstream", "olostep", "keenable"),
+                "needs_dedicated_key": pid in ("bocha", "anysearch", "serply", "tavily", "outcrawl", "firecrawl", "specstream", "olostep", "searchapi", "keenable"),
                 "needs_url": pid == "searxng",
                 # SearXNG stores an instance URL (not a secret), so echo it back
                 # verbatim to prefill/edit; other providers mask their key.
@@ -1737,6 +1753,8 @@ class ModelsHandler:
         "MiniMax-Text-01": {"context_window": 1000000},
         "mimo-v2.6-pro": {"context_window": 1000000, "max_output_tokens": 131072},
         "mimo-v2.6-flash": {"context_window": 1000000, "max_output_tokens": 131072},
+        "gpt-6.2-sol": {"context_window": 1050000, "max_output_tokens": 128000},
+        "gpt-6.2-astra": {"context_window": 1050000, "max_output_tokens": 128000},
         "gpt-6.1-terra": {"capabilities": ["text", "vision"], "context_window": 1050000, "max_output_tokens": 128000},
         "gpt-6.1-sol": {"context_window": 1000000, "max_output_tokens": 128000},
         "gpt-6-luna": {"context_window": 1000000, "max_output_tokens": 128000},
@@ -2806,7 +2824,7 @@ class ModelsHandler:
         instead.
         """
         provider = (data.get("provider") or "bocha").strip().lower()
-        if provider not in ("bocha", "anysearch", "serply", "tavily", "outcrawl", "firecrawl", "specstream", "olostep", "searxng", "keenable"):
+        if provider not in ("bocha", "anysearch", "serply", "tavily", "outcrawl", "firecrawl", "specstream", "olostep", "searchapi", "searxng", "keenable"):
             return json.dumps({"status": "error", "message": f"unsupported search provider: {provider!r}"})
 
         if provider in ("anysearch", "keenable"):

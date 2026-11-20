@@ -21,6 +21,8 @@ export interface ElectronAPI {
   getPathForFile?: (file: File) => string
   /** This machine's IPv4 addresses on private networks. */
   getLanAddresses?: () => Promise<string[]>
+  /** The computer's name, used to label this app in other instances' device lists. */
+  getHostName?: () => Promise<string>
   restartBackend: () => Promise<boolean>
   selectDirectory: () => Promise<string | null>
   selectFile: (filters?: { name: string; extensions: string[] }[]) => Promise<string | null>
@@ -82,6 +84,9 @@ export interface ElectronAPI {
   // onOpenSession with the session id.
   notify?: (payload: { title?: string; body?: string; sessionId?: string; silent?: boolean; force?: boolean }) => Promise<boolean>
   onOpenSession?: (callback: (sessionId: string) => void) => () => void
+  // Number of conversations with unseen results, shown as a badge on the
+  // taskbar (Windows) / Dock (macOS) icon; 0 clears it.
+  setUnreadBadge?: (count: number) => void
   platform: string
   // OS UI language (e.g. "zh-CN"); used to default the language on first run.
   systemLocale?: string
@@ -677,6 +682,8 @@ export interface ProviderMeta {
 export interface ConfigData {
   use_agent: boolean
   title: string
+  /** This CowAgent device: its id and the name other devices show for it. */
+  device?: { id: string; name: string }
   model: string
   bot_type: string
   use_linkai: boolean

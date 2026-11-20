@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }
   },
   getLanAddresses: () => ipcRenderer.invoke('get-lan-addresses') as Promise<string[]>,
+  getHostName: () => ipcRenderer.invoke('get-host-name') as Promise<string>,
   restartBackend: () => ipcRenderer.invoke('restart-backend'),
   selectDirectory: () => ipcRenderer.invoke('select-directory'),
   selectFile: (filters?: Electron.FileFilter[]) => ipcRenderer.invoke('select-file', filters),
@@ -139,6 +140,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('open-session', handler)
     return () => ipcRenderer.removeListener('open-session', handler)
   },
+  setUnreadBadge: (count: number) => ipcRenderer.send('set-unread-badge', count),
 
   platform: process.platform,
   // OS UI language (e.g. "zh-CN"), read synchronously so the renderer can pick

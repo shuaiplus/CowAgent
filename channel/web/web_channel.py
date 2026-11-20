@@ -29,6 +29,11 @@ from channel.web.api.chat import (  # noqa: F401
 )
 from channel.web.api.config import ConfigHandler, ExternalApiHandler  # noqa: F401
 from channel.web.api.env import EnvVariablesHandler, EnvVariableHandler, EnvSyncHandler  # noqa: F401
+from channel.web.api.bash_settings import BashSettingsHandler  # noqa: F401
+from channel.web.api.devices import (  # noqa: F401
+    AuthPairHandler, DeviceHandler, DeviceSelfHandler, DevicesHandler, DevicesRevokeOthersHandler,
+    PairingHandler, PairingStatusHandler, WellKnownHandler,
+)
 from channel.web.api.files import (  # noqa: F401
     FileRevealHandler, FileServeHandler, PreviewHandler, UploadHandler, UploadsHandler,
     VoiceAsrHandler, VoiceTtsHandler,
@@ -57,7 +62,7 @@ from channel.web.api.openai_compat import (  # noqa: F401
     OpenAIChatCompletionsHandler, OpenAIModelsHandler,
 )
 from channel.web.api.pages import (  # noqa: F401
-    AssetsHandler, ChatHandler, HealthHandler, RootHandler,
+    AssetsHandler, ChatHandler, HealthHandler, InstanceWorkerHandler, RootHandler,
 )
 from channel.web.api.scheduler import (  # noqa: F401
     SchedulerCreateHandler, SchedulerDeleteHandler, SchedulerHandler,
@@ -105,9 +110,19 @@ URLS = (
     # Guest share visitor pages (/share/<token>) and the owner's share API.
     *GUEST_URLS,
     '/api/integrations', 'IntegrationsHandler',
+    '/api/tools/bash/settings', 'BashSettingsHandler',
     '/auth/login', 'AuthLoginHandler',
     '/auth/check', 'AuthCheckHandler',
     '/auth/logout', 'AuthLogoutHandler',
+    '/auth/pair', 'AuthPairHandler',
+    '/.well-known/cowagent', 'WellKnownHandler',
+    '/api/pairing', 'PairingHandler',
+    '/api/pairing/(p_[0-9a-f]+)', 'PairingStatusHandler',
+    '/api/devices', 'DevicesHandler',
+    '/api/device', 'DeviceSelfHandler',
+    '/api/devices/revoke_others', 'DevicesRevokeOthersHandler',
+    '/api/devices/(d_[0-9a-f]+)', 'DeviceHandler',
+    '/instance-sw.js', 'InstanceWorkerHandler',
     '/message', 'MessageHandler',
     '/upload', 'UploadHandler',
     '/uploads/(.*)', 'UploadsHandler',
