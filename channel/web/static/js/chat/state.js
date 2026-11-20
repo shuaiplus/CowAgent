@@ -133,6 +133,8 @@ const COMPOSER_MIN_H = 52;
 const COMPOSER_MAX_H = 220;
 
 function autoResizeComposer() {
+    // A hidden composer has no width, so its scrollHeight would be meaningless.
+    if (chatInput.clientWidth === 0) return;
     chatInput.style.height = COMPOSER_MIN_H + 'px';
     const scrollH = chatInput.scrollHeight;
     chatInput.style.height = Math.max(COMPOSER_MIN_H, Math.min(scrollH, COMPOSER_MAX_H)) + 'px';
@@ -144,6 +146,18 @@ function resetComposerHeight() {
     chatInput.style.height = COMPOSER_MIN_H + 'px';
     chatInput.style.overflowY = 'hidden';
 }
+
+// Line wrapping depends on the width, which changes when side panels open or
+// close or the chat view becomes visible again.
+(function watchComposerWidth() {
+    if (typeof ResizeObserver === 'undefined') return;
+    let width = chatInput.clientWidth;
+    new ResizeObserver(() => {
+        if (chatInput.clientWidth === width) return;
+        width = chatInput.clientWidth;
+        if (chatInput.value) autoResizeComposer(); else resetComposerHeight();
+    }).observe(chatInput);
+})();
 
 // ---------------- Mic button: in-page voice input via the configured ASR provider ----------------
 (function setupMicButton() {
@@ -710,6 +724,7 @@ function steerActiveTask() {
 
     chatInput.value = '';
     resetComposerHeight();
+    saveComposerDraft();
     updateSteerBtnState();
 
     fetch('/message', {
@@ -862,6 +877,7 @@ async function handleFileSelect(files) {
     const tasks = [];
     for (const file of files) {
         const placeholder = { file_name: file.name, file_type: 'file', _uploading: true };
+        const draftKey = runtimeSessionKey(sessionId);
         pendingAttachments.push(placeholder);
         uploadingCount++;
         renderAttachmentPreview();
@@ -879,6 +895,7 @@ async function handleFileSelect(files) {
                     placeholder.file_type = data.file_type;
                     placeholder.preview_url = data.preview_url;
                     delete placeholder._uploading;
+                    fileFinishedUpload(draftKey, placeholder);
                 } else {
                     const i = pendingAttachments.indexOf(placeholder);
                     if (i !== -1) pendingAttachments.splice(i, 1);
@@ -923,6 +940,7 @@ async function handleFolderSelect(files) {
             file_count: entries.length,
             _uploading: true,
         };
+        const draftKey = runtimeSessionKey(sessionId);
         pendingAttachments.push(placeholder);
         uploadingCount++;
         renderAttachmentPreview();
@@ -949,6 +967,7 @@ async function handleFolderSelect(files) {
                 placeholder.file_path = data.root_path;
                 placeholder.file_name = data.root_name || rootName;
                 delete placeholder._uploading;
+                fileFinishedUpload(draftKey, placeholder);
             } catch (e) {
                 console.error('Directory upload failed:', e);
                 const i = pendingAttachments.indexOf(placeholder);

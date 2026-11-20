@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect, useMemo, forwardRef, useImperativeHandle } from 'react'
+import React, { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, forwardRef, useImperativeHandle } from 'react'
 import {
   Plus,
   Paperclip,
@@ -14,7 +14,7 @@ import { t } from '../i18n'
 import { product } from '@product'
 import type { Attachment, WorkspaceEntry, AgentBadge } from '../types'
 import AgentAvatar from './AgentAvatar'
-import { chatDraft } from '../store/draftStore'
+import { getDraft, setDraft, PREFILL_EVENT } from '../store/draftStore'
 import apiClient from '../api/client'
 import { PaperPlaneIcon } from './icons'
 import { WORKSPACE_DRAG_TYPE } from './FileTree'
@@ -61,11 +61,15 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
   { onSend, onNewChat, onStop, onClearContext, isStreaming, sessionId, onAdjustContext, onToast },
   ref
 ) {
-  // Restore the draft saved in `chatDraft` on mount (lazy init: the very first
-  // render must already show it, otherwise the write-through effect below would
+  // Restore this session's draft on mount (lazy init: the very first render
+  // must already show it, otherwise the write-through effect below would
   // overwrite the saved draft with the initial empty state).
-  const [text, setText] = useState(() => chatDraft.text)
-  const [attachments, setAttachments] = useState(() => chatDraft.attachments)
+  const [text, setText] = useState(() => getDraft(sessionId).text)
+  const [attachments, setAttachments] = useState(() => getDraft(sessionId).attachments)
+  // Session the input currently holds the draft of. Lags `sessionId` by one
+  // effect on a switch, so the write-through never files text under the wrong
+  // conversation.
+  const draftSidRef = useRef(sessionId)
   // Show the Agent picker only when the install runs a team. Single-Agent
   // clients never see it, keeping the composer row identical to before.
   const multiAgent = useAgentStore(selectMultiAgent)
@@ -296,7 +300,8 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
   // 180px). Keep overflow hidden until we hit the cap, so an empty/short input
   // never shows a scrollbar (matches the web console behavior).
   const autoSize = (el: HTMLTextAreaElement | null) => {
-    if (!el) return
+    // A hidden textarea has no width, so its scrollHeight would be meaningless.
+    if (!el || el.clientWidth === 0) return
     el.style.height = '48px'
     const h = Math.min(el.scrollHeight, 200)
     el.style.height = h + 'px'
@@ -310,21 +315,70 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
     el.style.overflowY = 'hidden'
   }
 
-  // Sync the height once on mount so the very first render matches the 42px
-  // single-line height instead of the browser's default textarea size.
-  useEffect(() => {
+  // Fit the height to the content before paint whenever the text changes, so
+  // a draft swapped in on session switch never shows at a stale height.
+  useLayoutEffect(() => {
     autoSize(textareaRef.current)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text])
+
+  // Line wrapping depends on the width, which changes when side panels open or
+  // close or the composer becomes visible again.
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    let width = el.clientWidth
+    const ro = new ResizeObserver(() => {
+      if (el.clientWidth === width) return
+      width = el.clientWidth
+      autoSize(el)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Write the input through to `chatDraft` on every change so it survives this
-  // component unmounting when the user navigates to another page (chat route
-  // unmounts ChatPage; see store/draftStore.ts). Sending clears the input, which
+  // Switching conversations swaps in the draft of the one being opened; what
+  // was typed in the previous one is already saved under its id.
+  useEffect(() => {
+    if (draftSidRef.current === sessionId) return
+    draftSidRef.current = sessionId
+    const draft = getDraft(sessionId)
+    setText(draft.text)
+    setAttachments(draft.attachments)
+    setSlashOpen(false)
+    closeMention()
+    requestAnimationFrame(() => autoSize(textareaRef.current))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId])
+
+  // Write the input through to the session's draft on every change so it
+  // survives switching sessions, navigating to another page (the chat route
+  // unmounts ChatPage) and restarting. Sending clears the input, which
   // therefore also clears the saved draft.
   useEffect(() => {
-    chatDraft.text = text
-    chatDraft.attachments = attachments
+    setDraft(draftSidRef.current, { text, attachments })
   }, [text, attachments])
+
+  // Text handed over by another surface (e.g. "create a theme with the Agent").
+  // A prefill for another session is already in its draft and loads on switch.
+  useEffect(() => {
+    const onPrefill = (e: Event) => {
+      const { sid, text: prefill } = (e as CustomEvent<{ sid: string; text: string }>).detail
+      if (sid !== draftSidRef.current) return
+      setText(prefill)
+      setAttachments([])
+      requestAnimationFrame(() => {
+        const el = textareaRef.current
+        if (el) {
+          el.focus()
+          autoSize(el)
+        }
+      })
+    }
+    window.addEventListener(PREFILL_EVENT, onPrefill)
+    return () => window.removeEventListener(PREFILL_EVENT, onPrefill)
+  }, [])
 
   // Allow the parent to load a draft (e.g. when editing a past user message).
   useImperativeHandle(ref, () => (draft: string, atts: Attachment[]) => {
@@ -545,20 +599,25 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
     // Report per-file outcomes: a silent failure here is indistinguishable from
     // the file picker never opening, which makes the feature look broken.
     const failed: string[] = []
+    const sid = draftSidRef.current
     try {
       for (const file of files) {
         try {
-          const result = await apiClient.uploadFile(file, sessionId)
+          const result = await apiClient.uploadFile(file, sid)
           if (result.status === 'success') {
-            setAttachments((prev) => [
-              ...prev,
-              {
-                file_path: result.file_path,
-                file_name: result.file_name,
-                file_type: result.file_type as Attachment['file_type'],
-                preview_url: result.preview_url,
-              },
-            ])
+            const att: Attachment = {
+              file_path: result.file_path,
+              file_name: result.file_name,
+              file_type: result.file_type as Attachment['file_type'],
+              preview_url: result.preview_url,
+            }
+            // The user may have switched conversations while this uploaded.
+            if (draftSidRef.current === sid) {
+              setAttachments((prev) => [...prev, att])
+            } else {
+              const draft = getDraft(sid)
+              setDraft(sid, { text: draft.text, attachments: [...draft.attachments, att] })
+            }
           } else {
             failed.push(`${file.name}: ${result.message || 'unknown error'}`)
           }

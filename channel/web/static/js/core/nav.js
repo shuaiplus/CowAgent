@@ -46,6 +46,7 @@ function _switchToView(viewId) {
     const leavingAgents = currentView === 'agents' && viewId !== 'agents';
     currentView = viewId;
     menuSyncActive();
+    if (viewId === 'chat' && typeof clearViewingUnread === 'function') clearViewingUnread();
     // The Agent detail is a fixed drawer, so it would otherwise hang over
     // whatever view you navigate to. It only belongs to the Agent Team page.
     if (viewId !== 'agents') closeAgentDetail();
@@ -138,6 +139,7 @@ function syncSidebarTips() {
             item.removeAttribute('data-tip-float');
         }
     });
+    if (typeof renderInstanceSwitcher === 'function') renderInstanceSwitcher();
     const toggle = document.getElementById('sidebar-collapse-btn');
     if (toggle) {
         toggle.setAttribute('data-tooltip', t(collapsed ? 'sidebar_expand' : 'sidebar_collapse'));

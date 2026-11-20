@@ -854,7 +854,7 @@ function copyExternalApiField(id, btn) {
 }
 
 function switchConfigTab(tab) {
-    ['basic', 'models', 'integrations', 'environment'].forEach(name => {
+    ['basic', 'models', 'integrations', 'environment', 'devices'].forEach(name => {
         document.getElementById(`config-tab-${name}`)?.classList.toggle('active', name === tab);
         document.getElementById(`config-panel-${name}`)?.classList.toggle('hidden', name !== tab);
     });
@@ -862,6 +862,8 @@ function switchConfigTab(tab) {
     if (tab === 'integrations') loadIntegrationsView();
     if (tab === 'environment') loadEnvView();
     else clearEnvEditor();
+    if (tab === 'devices') loadDevicesView();
+    else stopDevicesView();
     // Re-pull /config when returning to Basic: a provider added on the Models
     // tab must show up in the basic main-model provider picker without a manual
     // page refresh. loadConfigView re-renders from the fresh provider list.

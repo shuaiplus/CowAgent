@@ -69,6 +69,7 @@
     <link rel="stylesheet" href="/assets/css/menu.css">
     <link rel="stylesheet" href="/assets/css/themes.css">
     <link rel="stylesheet" href="/assets/css/environment.css">
+    <link rel="stylesheet" href="/assets/css/devices.css">
     <!-- Apply theme/lang before first paint to avoid flash of unstyled content.
          This runs synchronously in <head> so the correct class is on <html>
          before any CSS or body rendering occurs. -->
@@ -182,6 +183,8 @@
 
 <!--#include templates/modals/mcp-editor.html-->
 
+<!--#include templates/modals/bash-settings.html-->
+
 <!--#include templates/modals/skill-add.html-->
 
 <!--#include templates/modals/theme-add.html-->
@@ -203,6 +206,8 @@
 <!--#include templates/modals/menu-editor.html-->
 
 <!--#include templates/modals/share-dialogs.html-->
+
+<!--#include templates/modals/instance-dialogs.html-->
 
     <!-- Split out of a single console.js. These are classic scripts, not
          modules: they share one global scope and `defer` runs them in this
@@ -228,6 +233,9 @@
          validates against. Only registers a popstate listener at load time;
          the first route is applied from initApp(), once auth has settled. -->
     <script defer src="/assets/js/core/router.js"></script>
+    <!-- Declarations only; boot.js calls instanceBoot() before the first
+         backend request, and auth.js consults instanceActive() on a 401. -->
+    <script defer src="/assets/js/core/instances.js"></script>
 
     <!-- Ahead of chat/, not with the other views: chat/state.js computes
          sessionId at load time and activeSessionStorageKey() reads
@@ -248,6 +256,7 @@
     <script defer src="/assets/js/chat/render.js"></script>
     <script defer src="/assets/js/chat/timeline.js"></script>
     <script defer src="/assets/js/chat/new-chat.js"></script>
+    <script defer src="/assets/js/chat/session-status.js"></script>
 
     <script defer src="/assets/js/views/sessions.js"></script>
     <script defer src="/assets/js/views/config.js"></script>
@@ -268,6 +277,7 @@
     <script defer src="/assets/js/views/artifacts.js"></script>
     <script defer src="/assets/js/views/menu-editor.js"></script>
     <script defer src="/assets/js/views/shares.js"></script>
+    <script defer src="/assets/js/views/devices.js"></script>
 
     <!-- Last of the core layer rather than first, which is where it sat in
          console.js. It installs a window.fetch wrapper for 401 handling, and
