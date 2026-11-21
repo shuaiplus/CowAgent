@@ -3,7 +3,11 @@
 import json
 import subprocess
 import sys
+from types import SimpleNamespace
 
+from agent.permission import FULL_ACCESS, READ_ONLY
+from agent.protocol.agent_stream import AgentStreamExecutor, build_tools_schema
+from agent.tools.write.write import Write
 from bridge.agent_bridge import AgentLLMModel
 from config import conf
 from models.codex import app_server
@@ -37,6 +41,11 @@ for line in sys.stdin:
             result = {"data": [{"model": "codex-test"}, {"model": "codex-other"}]}
     elif method == "thread/start":
         assert params["environments"] == [] and params["sandbox"] == "read-only"
+        assert params["approvalPolicy"] == "never"
+        assert params["config"]["include_permissions_instructions"] is False
+        assert params["config"]["include_environment_context"] is False
+        assert "CowAgent is the host" in params["developerInstructions"]
+        assert "Use CowAgent tools according to this session's permissions." in params["baseInstructions"]
         assert params["ephemeral"] and params["model"] == "codex-test"
         namespaces = params["dynamicTools"]
         if namespaces:
@@ -51,7 +60,7 @@ for line in sys.stdin:
         if tools and not history:
             send({"method": "item/tool/call", "id": "tool-request", "params": {
                 **address, "tool": tools[0]["name"], "namespace": "cowagent", "callId": "upstream-call",
-                "arguments": {"key": "value"},
+                "arguments": {"path": "cowagent.txt", "content": "written by CowAgent"},
             }})
         else:
             if tools:
@@ -60,7 +69,7 @@ for line in sys.stdin:
                 ]
                 assert history[1]["name"] == tools[0]["name"] and history[1]["namespace"] == "cowagent"
                 assert history[1]["call_id"] == history[2]["call_id"]
-                assert history[2]["output"] == "42"
+                assert json.loads(history[2]["output"])["path"] == "cowagent.txt"
             send({"method": "item/agentMessage/delta", "params": {
                 **address, "itemId": "message", "delta": "The answer is ",
             }})
@@ -114,23 +123,43 @@ def _routed_bot(monkeypatch):
 def test_codex_continues_with_cowagent_tool_results(monkeypatch, tmp_path):
     children = _fake_server(monkeypatch, tmp_path)
     bot = _routed_bot(monkeypatch)
-    tools = [{"name": "lookup", "description": "Look up a value", "input_schema": {"type": "object"}}]
-    messages = [{"role": "user", "content": [{"type": "text", "text": "What is the value?"}]}]
+    write = Write({"cwd": str(tmp_path)})
+    tools = build_tools_schema([write])
+    messages = [{"role": "user", "content": [{"type": "text", "text": "Write a test file."}]}]
 
-    first = bot.call_with_tools(messages, tools)
+    system = "Use CowAgent tools according to this session's permissions."
+    first = bot.call_with_tools(messages, tools, system=system)
     call = first["choices"][0]["message"]["tool_calls"][0]
     assert first["choices"][0]["finish_reason"] == "tool_calls"
-    assert call["function"]["name"] == "lookup"
-    assert json.loads(call["function"]["arguments"]) == {"key": "value"}
+    assert call["function"]["name"] == "write"
     assert children[0].poll() is not None
+
+    agent = SimpleNamespace(
+        effective_permission_mode=lambda: READ_ONLY,
+        effective_cwd=lambda: str(tmp_path),
+        write_roots=lambda: [str(tmp_path)],
+        protected_paths=lambda: [],
+    )
+    executor = AgentStreamExecutor(agent, model=None, system_prompt=system, tools=[write])
+    arguments = json.loads(call["function"]["arguments"])
+    tool_call = {"id": call["id"], "name": "write", "arguments": arguments}
+    target = tmp_path / "cowagent.txt"
+
+    assert executor._execute_tool(tool_call)["status"] == "error"
+    assert not target.exists()
+
+    agent.effective_permission_mode = lambda: FULL_ACCESS
+    result = executor._execute_tool(tool_call)
+    assert result["status"] == "success"
+    assert target.read_text() == "written by CowAgent"
 
     messages.extend([
         {"role": "assistant", "content": [{
-            "type": "tool_use", "id": call["id"], "name": "lookup", "input": {"key": "value"},
+            "type": "tool_use", "id": call["id"], "name": "write", "input": arguments,
         }]},
-        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": call["id"], "content": "42"}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": call["id"], "content": result["result"]}]},
     ])
-    chunks = list(bot.call_with_tools(messages, tools, stream=True))
+    chunks = list(bot.call_with_tools(messages, tools, stream=True, system=system))
     assert [chunk["choices"][0]["delta"].get("content") for chunk in chunks[:-1]] == [
         "The answer is ", "42.",
     ]

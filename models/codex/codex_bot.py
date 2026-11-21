@@ -18,10 +18,15 @@ from models.session_manager import SessionManager
 
 # One child at a time can refresh this instance's managed OAuth credentials.
 _MODEL_CALL = Lock()
-_INSTRUCTIONS = (
-    "You are the chat model for CowAgent. Use the supplied CowAgent tools when needed. "
-    "CowAgent executes those tools and provides the results so you can continue. "
-    "Answer in the user's language."
+_BASE_INSTRUCTIONS = "You are the model powering CowAgent. Answer in the user's language."
+_TOOL_EXECUTION_INSTRUCTIONS = (
+    "CowAgent is the host for this conversation. It executes the supplied cowagent tools and "
+    "controls their permissions. Use these tools for requested actions, including file edits "
+    "and commands, when the appropriate tool is available. CowAgent will return the result "
+    "or any permission denial. Report what the tools actually did. The App Server's local "
+    "execution settings apply only to its own built-in tools and do not determine what "
+    "CowAgent tools can do. Use CowAgent's current instructions and tool results to determine "
+    "access instead of relying on previous assistant statements about permissions."
 )
 
 
@@ -112,14 +117,20 @@ class CodexBot(Bot, OpenAICompatibleBot):
                 "inputSchema": function.get("parameters") or {"type": "object", "properties": {}},
                 "deferLoading": False,
             })
-        instructions = f"{_INSTRUCTIONS}\n\n{system}" if system else _INSTRUCTIONS
+        instructions = f"{_BASE_INSTRUCTIONS}\n\n{system}" if system else _BASE_INSTRUCTIONS
         try:
             with _MODEL_CALL, AppServer(timeout=conf().get("request_timeout") or 120) as server:
                 server.require_chatgpt()
                 result = server.request("thread/start", {
                     "model": model, "modelProvider": "openai", "ephemeral": True,
                     "approvalPolicy": "never", "sandbox": "read-only", "environments": [],
-                    "baseInstructions": instructions, "developerInstructions": "",
+                    "baseInstructions": instructions,
+                    "developerInstructions": _TOOL_EXECUTION_INSTRUCTIONS,
+                    # CowAgent supplies the workspace and permission context for its tools.
+                    "config": {
+                        "include_permissions_instructions": False,
+                        "include_environment_context": False,
+                    },
                     "dynamicTools": [{
                         "type": "namespace", "name": TOOL_NAMESPACE,
                         "description": "Tools executed by CowAgent.", "tools": dynamic_tools,
