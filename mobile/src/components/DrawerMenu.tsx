@@ -18,7 +18,7 @@ import {Pressable, ScrollView, Text, View} from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import type {ChatFile} from '../files/chatFile';
 import {tr, trf} from '../i18n';
-import {localDeviceName} from '../kernel/localKernel';
+import {useLocalDeviceName} from '../kernel/localKernel';
 import {menuSections, type MenuEntry, type MenuRoute} from '../navigation/menuViews';
 import type {SessionItem} from '../protocol/events';
 import {useMenuStore} from '../store/menuStore';
@@ -50,6 +50,7 @@ export function DrawerMenu({
   currentSessionId,
   onNewChat,
   onOpenSession,
+  onSessionActions,
   onNavigate,
   onOpenFile,
   onOpenLink,
@@ -62,6 +63,8 @@ export function DrawerMenu({
   currentSessionId: string;
   onNewChat: () => void;
   onOpenSession: (session: SessionItem) => void;
+  /** Long press on a conversation: pin, rename, delete. */
+  onSessionActions: (session: SessionItem) => void;
   onNavigate: (route: DrawerRoute) => void;
   onOpenFile: (file: ChatFile) => void;
   onOpenLink: (label: string, url: string, external: boolean) => void;
@@ -79,7 +82,8 @@ export function DrawerMenu({
   const [aboutOpen, setAboutOpen] = useState(false);
   const server = activeServer();
   // Servers go by the name they gave themselves; the address is only a fallback.
-  const name = server?.local ? localDeviceName() : server?.name || server?.baseUrl.replace(/^https?:\/\//, '');
+  const localName = useLocalDeviceName();
+  const name = server?.local ? localName : server?.name || server?.baseUrl.replace(/^https?:\/\//, '');
   const offline = realtime === 'closed';
   const status = !server
     ? tr('menu_not_connected')
@@ -87,7 +91,7 @@ export function DrawerMenu({
       ? tr('menu_reconnecting')
       : server.local
         ? tr('server_local_meta')
-        : tr('menu_connected');
+        : tr('menu_remote_device');
 
   const renderEntry = (e: MenuEntry) => {
     if (e.kind === 'route') {
@@ -125,6 +129,7 @@ export function DrawerMenu({
           onBack={nested ? () => onViewChange('menu') : undefined}
           onNewChat={onNewChat}
           onOpenSession={onOpenSession}
+          onSessionActions={onSessionActions}
           onViewAll={() => onNavigate('Sessions')}
         />
       </View>
@@ -206,6 +211,7 @@ function SessionList({
   onBack,
   onNewChat,
   onOpenSession,
+  onSessionActions,
   onViewAll,
 }: {
   currentSessionId: string;
@@ -213,12 +219,14 @@ function SessionList({
   onBack?: () => void;
   onNewChat: () => void;
   onOpenSession: (session: SessionItem) => void;
+  onSessionActions: (session: SessionItem) => void;
   onViewAll: () => void;
 }) {
   const t = useTheme();
   const styles = useStyles();
   const sessions = useSessionStore(s => s.sessions);
   const total = useSessionStore(s => s.total);
+  const shown = Math.min(sessions.length, RECENT_LIMIT);
   const groups = useMemo(() => groupSessions(sessions.slice(0, RECENT_LIMIT)), [sessions]);
   return (
     <>
@@ -259,12 +267,13 @@ function SessionList({
                 meta={g.key === 'yesterday' ? clockTime(s.last_active) : shortTime(s.last_active)}
                 active={s.session_id === currentSessionId}
                 onPress={() => onOpenSession(s)}
+                onLongPress={() => onSessionActions(s)}
               />
             ))}
           </React.Fragment>
         ))}
         {!groups.length && <Text style={styles.empty}>{tr('menu_no_chats')}</Text>}
-        {total > 0 && (
+        {total > shown && (
           <Pressable accessibilityRole="button" hitSlop={6} onPress={onViewAll} style={styles.more}>
             <Text style={styles.moreText}>{trf('menu_view_all', {n: total})}</Text>
           </Pressable>
@@ -282,6 +291,7 @@ function Item({
   external,
   dim,
   onPress,
+  onLongPress,
 }: {
   icon: IconDefinition;
   label: string;
@@ -292,6 +302,7 @@ function Item({
   external?: boolean;
   dim?: boolean;
   onPress: () => void;
+  onLongPress?: () => void;
 }) {
   const t = useTheme();
   const styles = useStyles();
@@ -299,7 +310,10 @@ function Item({
     <Pressable
       accessibilityRole={external ? 'link' : 'button'}
       accessibilityState={{selected: active, disabled: dim}}
+      accessibilityHint={onLongPress ? tr('session_row_hint') : undefined}
       onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={350}
       style={({pressed}) => [styles.item, active && styles.itemActive, pressed && !active && styles.pressed]}>
       <View style={styles.itemIcon}>
         <Icon icon={icon} size={15} color={active ? t.accent : dim ? t.t4 : t.t2} />

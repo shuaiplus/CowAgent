@@ -1,7 +1,7 @@
 const zh = {
   // Task list
   task_title: '定时任务',
-  task_local_note: '本机 Agent 只在 App 打开时运行，App 切到后台或关闭期间，定时任务不会执行。',
+  task_local_note: '手机内置 Agent 只在 App 打开时运行，后台或关闭期间定时任务不会执行',
   task_new: '新增任务',
   task_tab_tasks: '任务',
   task_runs: '执行记录',
@@ -123,7 +123,7 @@ const zh = {
   channel_connect_failed: '连接失败：{error}',
   channel_disconnected_named: '已断开{name}',
   channel_disconnect_failed: '断开失败：{error}',
-  channel_binding_updated: '已更新，下一条消息起生效',
+  channel_binding_updated: '已更新',
   channel_secret_keep: '密钥留空表示不修改。',
   channel_connect: '连接',
   channel_feishu_scan_create: '扫码就能创建好机器人',
@@ -207,7 +207,7 @@ const zh = {
 const en: Record<keyof typeof zh, string> = {
   // Task list
   task_title: 'Scheduled tasks',
-  task_local_note: "The on-device agent only runs while the app is open. Tasks don't run while it's in the background or closed.",
+  task_local_note: "The built-in phone agent only runs while the app is open, so tasks don't run in the background",
   task_new: 'New task',
   task_tab_tasks: 'Tasks',
   task_runs: 'History',
@@ -330,7 +330,7 @@ const en: Record<keyof typeof zh, string> = {
   channel_connect_failed: 'Failed to connect: {error}',
   channel_disconnected_named: '{name} disconnected',
   channel_disconnect_failed: 'Failed to disconnect: {error}',
-  channel_binding_updated: 'Updated. Takes effect from the next message',
+  channel_binding_updated: 'Updated',
   channel_secret_keep: 'Leave secrets blank to keep them. ',
   channel_connect: 'Connect',
   channel_feishu_scan_create: 'Scan to create a bot',

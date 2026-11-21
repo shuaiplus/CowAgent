@@ -58,6 +58,7 @@ import type {
   UploadedFile,
   VersionInfo,
   VoiceReplyMode,
+  WorkspaceHit,
   WorkspaceText,
 } from '../protocol/resources';
 import {appendFile, type PickedFile} from '../media/types';
@@ -383,6 +384,11 @@ export async function setProviderCredential(providerId: string, apiKey: string, 
   });
 }
 
+/** Forgets a built-in vendor's key and base. */
+export async function clearProviderCredential(providerId: string) {
+  return http.request<{status: string}>('/api/models', {body: {action: 'delete_provider', provider_id: providerId}});
+}
+
 export interface CapabilityChoice {
   capability: CapabilityKey;
   /** Empty means automatic (vision, image, asr) or switched off (embedding). */
@@ -441,14 +447,6 @@ export async function savePublicUrl(publicUrl: string) {
   return http.request<{status: string; public_url: string}>('/api/integrations', {
     method: 'PUT',
     body: {public_url: publicUrl},
-  });
-}
-
-/** The server answers first, then restarts on the new address. */
-export async function saveListenHost(host: string) {
-  return http.request<{status: string; reason?: string}>('/api/integrations', {
-    method: 'PUT',
-    body: {web_host: host},
   });
 }
 
@@ -740,6 +738,13 @@ export async function getMemoryContent(filename: string, category: MemoryCategor
 /** No session: memory lives in the Agent's state root, not in whatever project a session has open. */
 export async function readWorkspaceText(path: string, agentId?: string) {
   return http.request<WorkspaceText>(`/api/workspace/read?${query({path, agent_id: agentId})}`);
+}
+
+/** Files and folders whose name matches `q`, rooted where the session works. */
+export async function searchWorkspace(q: string, sessionId?: string, agentId?: string, limit = 12) {
+  return http.request<{results: WorkspaceHit[]}>(
+    `/api/workspace/search?${query({q, limit, session: sessionId, agent_id: agentId})}`,
+  );
 }
 
 /** A stale `expectedMtime` fails with an ApiError whose body carries `code: "conflict"`. */
