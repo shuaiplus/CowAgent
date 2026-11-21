@@ -329,14 +329,14 @@ class WeixinApi:
         return self._post("ilink/bot/getconfig", {
             "ilink_user_id": user_id,
             "context_token": context_token,
-        }, timeout=10)
+        }, timeout=10, log_errors=False)
 
     def send_typing(self, user_id: str, typing_ticket: str, status: int = 1) -> dict:
         return self._post("ilink/bot/sendtyping", {
             "ilink_user_id": user_id,
             "typing_ticket": typing_ticket,
             "status": status,
-        }, timeout=10)
+        }, timeout=10, log_errors=False)
 
     # ── QR Login ───────────────────────────────────────────────────────
 

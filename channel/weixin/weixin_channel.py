@@ -25,6 +25,7 @@ from channel.weixin.weixin_api import (
     DEFAULT_BASE_URL, CDN_BASE_URL,
 )
 from channel.weixin.weixin_message import WeixinMessage
+from channel.weixin.typing_indicator import TypingIndicator
 from common import state_dir
 from common.expired_dict import ExpiredDict
 from common.log import logger
@@ -215,6 +216,7 @@ class WeixinChannel(ChatChannel):
     def __init__(self):
         super().__init__()
         self.api = None
+        self._typing = TypingIndicator()
         self._stop_event = threading.Event()
         self._poll_thread = None
         # user_id -> context_token. Guarded by _context_tokens_lock for any
@@ -295,6 +297,7 @@ class WeixinChannel(ChatChannel):
                 return
 
         self.api = WeixinApi(base_url=base_url, token=token, cdn_base_url=cdn_base_url)
+        self._typing.open(self._stop_event)
         self._hold_login(token)
         self.login_status = self.LOGIN_STATUS_OK
 
@@ -326,10 +329,12 @@ class WeixinChannel(ChatChannel):
     def stop(self):
         logger.info("[Weixin] stop() called")
         self._stop_event.set()
+        self._typing.close()
         self._hold_login("")
 
     def _relogin(self) -> bool:
         """Re-login after session expiry. Returns True on success."""
+        self._typing.close()
         base_url = self.api.base_url if self.api else DEFAULT_BASE_URL
         # Clearing the whole credentials file is intentional: the new login
         # will issue a fresh `token` and persisted context_tokens belong to
@@ -351,6 +356,7 @@ class WeixinChannel(ChatChannel):
             token=result["token"],
             cdn_base_url=self.api.cdn_base_url if self.api else CDN_BASE_URL,
         )
+        self._typing.open(self._stop_event)
         self._hold_login(result["token"])
         self.login_status = self.LOGIN_STATUS_OK
         return True
@@ -984,6 +990,28 @@ class WeixinChannel(ChatChannel):
                 context["desire_rtype"] = ReplyType.VOICE
 
         return context
+
+    def _handle(self, context: Context):
+        # Queue time and fast-path commands are deliberately excluded. Cover
+        # the entire actual handler, including voice, interim and media sends.
+        lease = None
+        if context is not None and context.content:
+            try:
+                receiver = context.get("receiver", "")
+                token = self._get_context_token(receiver, context.get("msg"))
+                lease = self._typing.acquire(
+                    receiver, self.api, token, lambda api: self.api is api
+                )
+            except Exception:
+                logger.warning("[Weixin] Could not acquire typing indicator")
+        try:
+            return super()._handle(context)
+        finally:
+            if lease is not None:
+                try:
+                    self._typing.release(lease)
+                except Exception:
+                    logger.warning("[Weixin] Could not release typing indicator")
 
     # ── Send reply ─────────────────────────────────────────────────────
 

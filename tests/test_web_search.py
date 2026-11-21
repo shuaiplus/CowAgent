@@ -1098,6 +1098,18 @@ class TestTavilyBackend(unittest.TestCase):
     def setUp(self):
         self.tool = web_search_module.WebSearch()
 
+    def test_tavily_search_uses_requested_count_and_configured_depth(self):
+        """Tavily forwards the caller's requested count and configured depth."""
+        cfg = {"tools": {"web_search": {"tavily_api_key": "test-key", "tavily_search_depth": "advanced"}}}
+        with patch.object(web_search_module, "conf", lambda: cfg), \
+                patch.object(web_search_module.requests, "post",
+                             return_value=_fake_response(200, {"results": []})) as mock_post:
+            result = self.tool.execute({"query": "test query", "count": 20})
+        self.assertEqual(result.status, "success")
+        body = mock_post.call_args.kwargs["json"]
+        self.assertEqual(body["max_results"], 20)
+        self.assertEqual(body["search_depth"], "advanced")
+
     def test_search_tavily_maps_results(self):
         """Tavily's content/source/score map to the unified output shape, and
         the query travels in the POST json body alongside the api_key."""
@@ -1126,8 +1138,38 @@ class TestTavilyBackend(unittest.TestCase):
         self.assertEqual(body["query"], "cowagent")
         self.assertEqual(body["api_key"], "test-key-123")
 
+    def test_search_tavily_falls_back_to_second_key_on_quota_exhaustion(self):
+        """Only explicit exhausted-account responses trigger the next key."""
+        responses = [
+            _fake_response(432, {"detail": {"error": "plan usage limit reached"}}),
+            _fake_response(200, {"results": [{"title": "Second account", "url": "https://example.com", "content": "ok"}]}),
+        ]
+        cfg = {"tools": {"web_search": {"tavily_api_key": "primary-test-key"}}}
+        with patch.object(web_search_module, "conf", lambda: cfg), \
+                patch.dict(os.environ, {"TAVILY_API_KEY_2": "secondary-test-key"}), \
+                patch.object(web_search_module.requests, "post", side_effect=responses) as mock_post:
+            result = self.tool._search_tavily("q", 1)
+
+        self.assertEqual(result.status, "success")
+        self.assertEqual(result.result["results"][0]["title"], "Second account")
+        self.assertEqual(mock_post.call_count, 2)
+        self.assertEqual(mock_post.call_args_list[0].kwargs["headers"]["Authorization"], "Bearer primary-test-key")
+        self.assertEqual(mock_post.call_args_list[1].kwargs["headers"]["Authorization"], "Bearer secondary-test-key")
+        self.assertEqual(mock_post.call_args_list[1].kwargs["json"]["api_key"], "secondary-test-key")
+
+    def test_search_tavily_does_not_fallback_on_rate_limit_or_invalid_key(self):
+        for status_code in (401, 429, 500):
+            with self.subTest(status_code=status_code):
+                cfg = {"tools": {"web_search": {"tavily_api_key": "primary-test-key"}}}
+                with patch.object(web_search_module, "conf", lambda: cfg), \
+                        patch.dict(os.environ, {"TAVILY_API_KEY_2": "secondary-test-key"}), \
+                        patch.object(web_search_module.requests, "post", return_value=_fake_response(status_code)) as mock_post:
+                    result = self.tool._search_tavily("q", 1)
+                self.assertEqual(result.status, "error")
+                self.assertEqual(mock_post.call_count, 1)
+
     def test_search_tavily_clamps_count(self):
-        """count is clamped into 1-20 and sent as max_results; falsy -> 10."""
+        """count is clamped into 1-20; missing/falsy -> 10."""
         with patch.object(web_search_module, "_get_api_key", return_value="k"), \
                 patch.object(web_search_module.requests, "post",
                              return_value=_fake_response(200, {"results": []})) as mock_post:

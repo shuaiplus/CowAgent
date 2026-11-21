@@ -479,10 +479,13 @@ class AgentStreamExecutor:
     def _empty_response_fallback(self) -> str:
         """Text to return when the model produced no answer at all.
 
-        Stays empty for runs that allow silence, so a scheduled task whose
-        notify condition wasn't met delivers nothing instead of an apology
-        addressed to a user who never asked anything.
+        A successfully queued file is already a complete user-facing result;
+        don't append a generic apology just because the model stayed silent
+        after the send tool. Stays empty for runs that explicitly allow silence.
         """
+        if self.files_to_send:
+            logger.info("[Agent] Empty text response kept as-is (file delivery already queued)")
+            return ""
         if self.allow_empty_response:
             logger.info("[Agent] Empty response kept as-is (silence allowed for this run)")
             return ""

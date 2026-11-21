@@ -73,6 +73,12 @@ class EmptyResponseFallbackTest(unittest.TestCase):
         self.assertTrue(response)
         self.assertIn("无法生成回复", response)
 
+    def test_empty_text_after_successfully_queued_file_is_not_replaced_by_fallback(self):
+        executor = _make_executor(allow_empty_response=False)
+        executor.files_to_send.append({"file_name": "quota.png", "path": "/tmp/quota.png"})
+
+        self.assertEqual(executor._empty_response_fallback(), "")
+
     def test_explicit_response_prompt_permits_silence_only_when_allowed(self):
         self.assertIn("返回空", _make_executor(True)._explicit_response_prompt())
         self.assertNotIn("返回空", _make_executor(False)._explicit_response_prompt())

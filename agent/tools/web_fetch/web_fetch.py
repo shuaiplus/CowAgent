@@ -5,6 +5,8 @@ Supports:
 - HTML web pages: extracts readable text content
 - Document files (PDF, Word, TXT, Markdown, etc.): downloads to workspace/tmp and parses content
 - Plain text downloads: prefers a declared HTTP charset, then existing decoding fallbacks
+- Tavily Extract backend (opt-in via tools.web_fetch.provider="tavily"):
+  uses the Tavily search credential and advanced extraction for web pages.
 - DeepSeek Fetch backend (opt-in via tools.web_fetch.provider="deepseek"):
   returns the page as Markdown through DeepSeek's official Fetch API
   (https://api-docs.deepseek.com/guides/search)
@@ -13,6 +15,7 @@ Supports:
   (https://docs.olostep.com/features/scrapes)
 """
 
+import json
 import os
 import re
 import uuid
@@ -24,7 +27,7 @@ import requests
 
 from agent.tools.base_tool import BaseTool, ToolResult
 from agent.tools.utils.truncate import truncate_head, format_size
-from agent.tools.utils.url_safety import validate_url_safe, safe_get
+from agent.tools.utils.url_safety import validate_url_safe, safe_get, _ssrf_protection_enabled
 from common.log import logger
 from common.media_download import MediaTooLargeError, read_response, save_response
 from config import conf
@@ -99,13 +102,13 @@ def _conf_str(value, default: str = "") -> str:
 
 def _fetch_provider() -> str:
     """The fetch backend: "direct" (default, fetch and parse locally),
-    "deepseek" (DeepSeek's official Fetch API, returns the page as Markdown)
-    or "olostep" (Olostep's Scrape API, returns the rendered page as Markdown).
+    "deepseek" (DeepSeek's official Fetch API, returns the page as Markdown),
+    "olostep" (Olostep's Scrape API), or "tavily" (Tavily Extract).
     Unknown values fail loudly so a typo never silently changes backends."""
     provider = _conf_str(_tools_web_fetch_conf().get("provider"), "direct").lower()
-    if provider not in ("direct", "deepseek", "olostep"):
+    if provider not in ("direct", "deepseek", "olostep", "tavily"):
         raise ValueError(
-            f"Unknown tools.web_fetch.provider {provider!r}; expected 'direct', 'deepseek' or 'olostep'"
+            f"Unknown tools.web_fetch.provider {provider!r}; expected 'direct', 'deepseek', 'olostep' or 'tavily'"
         )
     return provider
 
@@ -322,11 +325,78 @@ class WebFetch(BaseTool):
 
         if provider == "deepseek":
             return self._fetch_deepseek(url)
+        if provider == "tavily":
+            return self._fetch_tavily(url)
 
         if provider == "olostep":
             return self._fetch_olostep(url)
 
         return self._fetch_webpage(url)
+
+    # ---- Tavily Extract backend ----
+
+    def _fetch_tavily(self, url: str) -> ToolResult:
+        """Extract a page with Tavily; never silently switch providers on failure."""
+        # Tavily follows redirects on its own servers. We cannot enforce our
+        # per-hop guard or guest allowlist there, so fail closed under that policy.
+        if _ssrf_protection_enabled():
+            return ToolResult.fail("Error: Tavily Extract cannot enforce URL redirect security; "
+                                   "use the direct web_fetch provider when SSRF protection is enabled.")
+        from agent.tools.web_search.web_search import _get_api_key
+        key = _get_api_key("tavily")
+        if not key:
+            return ToolResult.fail("Error: Tavily Extract requires tools.web_search.tavily_api_key "
+                                   "or TAVILY_API_KEY.")
+        response = None
+        try:
+            response = requests.post(
+                "https://api.tavily.com/extract",
+                headers={"Authorization": f"Bearer {key}", "Accept": "application/json"},
+                json={"urls": [url], "extract_depth": "advanced", "format": "markdown"},
+                timeout=(10, 40), stream=True, allow_redirects=False,
+            )
+            status = response.status_code
+            if status == 401:
+                return ToolResult.fail("Error: Invalid Tavily API key.")
+            if status in (402, 432, 433):
+                return ToolResult.fail("Error: Tavily API quota or usage limit reached.")
+            if status == 429:
+                return ToolResult.fail("Error: Tavily API rate limit reached.")
+            if status != 200:
+                return ToolResult.fail(f"Error: Tavily Extract API returned HTTP {status}.")
+            if _parse_content_length(response) > MAX_FILE_SIZE:
+                return ToolResult.fail("Error: Tavily Extract response too large.")
+            body = read_response(response, MAX_FILE_SIZE, max_seconds=PAGE_READ_SECONDS)
+            try:
+                data = json.loads(body)
+            except (ValueError, UnicodeDecodeError):
+                return ToolResult.fail("Error: Tavily Extract returned invalid JSON.")
+            if not isinstance(data, dict) or not isinstance(data.get("results"), list):
+                return ToolResult.fail("Error: Tavily Extract returned an invalid response.")
+            results = data["results"]
+            if not results:
+                failed = data.get("failed_results")
+                reason = failed[0].get("error") if isinstance(failed, list) and failed and isinstance(failed[0], dict) else None
+                reason = reason.replace(key, "[redacted]")[:300] if isinstance(reason, str) else "no content returned"
+                return ToolResult.fail(f"Error: Tavily Extract failed: {reason}")
+            item = results[0]
+            if not isinstance(item, dict) or not isinstance(item.get("raw_content"), str):
+                return ToolResult.fail("Error: Tavily Extract returned invalid content.")
+            content = item["raw_content"]
+            if not content.strip():
+                return ToolResult.fail("Error: Tavily Extract returned no content.")
+            title = item.get("title")
+            title = title.strip() if isinstance(title, str) and title.strip() else "Untitled"
+            return ToolResult.success(f"Title: {title}\n\nContent:\n{content}")
+        except MediaTooLargeError:
+            return ToolResult.fail("Error: Tavily Extract response too large.")
+        except requests.Timeout:
+            return ToolResult.fail("Error: Tavily Extract request timed out.")
+        except requests.RequestException:
+            return ToolResult.fail("Error: Failed to connect to or read Tavily Extract API.")
+        finally:
+            if response is not None:
+                response.close()
 
     # ---- DeepSeek Fetch backend ----
 

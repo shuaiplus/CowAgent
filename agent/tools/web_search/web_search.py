@@ -1096,36 +1096,61 @@ class WebSearch(BaseTool):
     # ------------------------------------------------------------------
 
     def _search_tavily(self, query: str, count: int) -> ToolResult:
-        api_key = _get_api_key("tavily")
+        # The first credential remains the configured official Tavily key.
+        # A second independent account can be supplied out-of-band as
+        # TAVILY_API_KEY_2; never place it in config.json or logs.
+        primary_key = _get_api_key("tavily")
+        secondary_key = os.environ.get("TAVILY_API_KEY_2", "").strip()
+        api_keys = []
+        for key in (primary_key, secondary_key):
+            if key and key not in api_keys:
+                api_keys.append(key)
+        if not api_keys:
+            return ToolResult.fail("Error: Tavily API key is not configured.")
+
         url = "https://api.tavily.com/search"
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        }
         max_results = max(1, min(int(count or 10), 20))
         search_depth = _conf_str(_tools_web_search_conf().get("tavily_search_depth"), "basic").lower()
         if search_depth not in ("basic", "advanced"):
             search_depth = "basic"
 
         payload: Dict[str, Any] = {
-            "api_key": api_key,
             "query": query,
             "max_results": max_results,
             "search_depth": search_depth,
             "include_answer": False,
         }
 
-        logger.debug(f"[WebSearch] tavily: query='{query}', max_results={max_results}, depth={search_depth}")
-        resp = requests.post(url, headers=headers, json=payload, timeout=DEFAULT_TIMEOUT)
+        for index, key in enumerate(api_keys):
+            # Current official API accepts Bearer auth; retain the existing
+            # body field as well for compatibility with prior client behavior.
+            headers = {
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
+            payload["api_key"] = key
+            logger.debug(
+                f"[WebSearch] tavily: account_slot={index + 1}/{len(api_keys)}, "
+                f"query='{query}', max_results={max_results}, depth={search_depth}"
+            )
+            resp = requests.post(url, headers=headers, json=payload, timeout=DEFAULT_TIMEOUT)
 
-        if resp.status_code == 401:
-            return ToolResult.fail("Error: Invalid Tavily API key.")
-        if resp.status_code == 402:
-            return ToolResult.fail("Error: Tavily API quota exhausted. Check usage at https://tavily.com")
-        if resp.status_code == 429:
-            return ToolResult.fail("Error: Tavily API rate limit reached.")
-        if resp.status_code != 200:
-            return ToolResult.fail(f"Error: Tavily API returned HTTP {resp.status_code}: {resp.text[:200]}")
+            if resp.status_code in (402, 432) and index + 1 < len(api_keys):
+                logger.warning(
+                    f"[WebSearch] tavily account_slot={index + 1} exhausted (HTTP {resp.status_code}); "
+                    "trying configured secondary account"
+                )
+                continue
+            if resp.status_code == 401:
+                return ToolResult.fail("Error: Invalid Tavily API key.")
+            if resp.status_code in (402, 432):
+                return ToolResult.fail("Error: Tavily API quota exhausted. Check usage at https://tavily.com")
+            if resp.status_code == 429:
+                return ToolResult.fail("Error: Tavily API rate limit reached.")
+            if resp.status_code != 200:
+                return ToolResult.fail(f"Error: Tavily API returned HTTP {resp.status_code}: {resp.text[:200]}")
+            break
 
         data = resp.json()
         items = data.get("results") or []
