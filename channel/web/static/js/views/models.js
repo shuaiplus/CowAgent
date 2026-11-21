@@ -2162,7 +2162,7 @@ function openVendorModal(providerId, onSaved) {
         }
     }
     overlay.addEventListener('click', onOverlayClick);
-    keyInput.focus();
+    if (vendorModalState.providerId !== 'codex') keyInput.focus();
 }
 
 function fillVendorModalForProvider(providerId) {
@@ -2170,6 +2170,17 @@ function fillVendorModalForProvider(providerId) {
     if (!meta) return;
     document.getElementById('vendor-modal-title').textContent = localizedLabel(meta.label);
     document.getElementById('vendor-modal-subtitle').textContent = meta.id;
+    const isCodex = providerId === 'codex';
+    document.getElementById('vendor-modal-codex-login').classList.toggle('hidden', !isCodex);
+    document.getElementById('vendor-modal-api-fields').classList.toggle('hidden', isCodex);
+    document.getElementById('vendor-modal-catalog-wrap').classList.toggle('hidden', isCodex);
+    document.getElementById('vendor-modal-save').classList.toggle('hidden', isCodex);
+
+    if (isCodex) {
+        document.getElementById('vendor-modal-clear').classList.add('hidden');
+        vendorModalState.providerId = providerId;
+        return;
+    }
 
     // Aggregators get a link to the console that issues their key; other
     // providers manage keys on their own sites. Providers with base presets

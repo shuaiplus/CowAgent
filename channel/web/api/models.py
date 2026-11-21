@@ -27,6 +27,7 @@ from channel.web.core.providers import (
     is_real_key,
     legacy_custom_in_use,
     mask_key,
+    provider_model_names,
 )
 from common import const
 from common.log import logger
@@ -908,10 +909,10 @@ class ModelsHandler:
                 # An unset base follows the UI language; show that site, or saving
                 # the form would pin the default one and break keys from the other.
                 raw_base = resolve_cowagent_credentials()[1]
-            configured = is_real_key(raw_key)
             overrides = catalog_map.get(pid) or []
             hidden = hidden_map.get(pid) or []
             seed = [] if pid == "custom" else cls._preset_seed(pid)
+            configured = bool(seed) if pid == const.CODEX else is_real_key(raw_key)
             # The editor prefills from the effective list (presets minus
             # removals, plus overrides), so the user always edits the full
             # list — adding one model can no longer wipe the rest.
@@ -938,7 +939,7 @@ class ModelsHandler:
                 # The full effective list the editor loads as its rows.
                 "effective": effective,
                 "models": [e["name"] for e in effective] if effective
-                          else list(p.get("models") or []),
+                          else list(p["models"]),
             })
 
         def _sort_key(it):
@@ -1069,11 +1070,7 @@ class ModelsHandler:
         model lists, so a vendor without a catalog still offers its presets
         while a catalogued one offers its catalog instead.
         """
-        out = {}
-        for pid, meta in PROVIDER_MODELS.items():
-            models = (meta or {}).get("models")
-            out[pid] = list(models) if isinstance(models, (list, tuple)) else []
-        return out
+        return {pid: list(provider_model_names(pid)) for pid in PROVIDER_MODELS}
 
     @classmethod
     def _chat_fallback_capability(cls, local_config: dict) -> dict:
@@ -1826,7 +1823,7 @@ class ModelsHandler:
             if cap not in entry["capabilities"]:
                 entry["capabilities"].append(cap)
 
-        for m in PROVIDER_MODELS.get(pid, {}).get("models") or []:
+        for m in provider_model_names(pid):
             add(m if isinstance(m, str) else m.get("value"), "text")
         tables = (
             ("vision", cls._VISION_PROVIDER_MODELS),
@@ -2478,6 +2475,12 @@ class ModelsHandler:
                 return json.dumps({"status": "error", "message": f"unknown custom provider id: {custom_id}"})
         elif provider_id and provider_id not in PROVIDER_MODELS:
             return json.dumps({"status": "error", "message": f"unknown provider: {provider_id}"})
+
+        if provider_id == const.CODEX:
+            available = provider_model_names(provider_id)
+            if not available:
+                return json.dumps({"status": "error", "message": "Run 'cow codex login' on the CowAgent host."})
+            model = model or available[0]
 
         applied = {}
         local_config = conf()
