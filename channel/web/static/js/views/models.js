@@ -2325,7 +2325,7 @@ function stopCodexSetup() {
 }
 
 function openCodexSetup() {
-    const status = document.getElementById('codex-setup-status');
+    const status = document.getElementById('codex-status-message');
     const statusIcon = document.getElementById('codex-status-icon');
     const catalog = document.getElementById('codex-models');
     const list = document.getElementById('codex-model-list');
