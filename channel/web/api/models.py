@@ -18,6 +18,8 @@ import web
 
 from channel.web.core._common import (
     _config_write_guard,
+    _is_loopback_request,
+    _is_password_enabled,
     _read_config_file_for_write,
     _require_auth,
     _write_config_file_for_write,
@@ -1909,6 +1911,8 @@ class ModelsHandler:
         try:
             data = json.loads(web.data() or b"{}")
             action = data.get("action") or ""
+            if action in ("codex_status", "codex_login", "codex_cancel", "codex_refresh", "codex_logout"):
+                return self._handle_codex_setup(action[len("codex_"):])
             if action == "discover_models":
                 # Read-only: this probes the provider's /models endpoint with a
                 # 10s timeout and never writes config.json. Holding the save
@@ -1928,6 +1932,18 @@ class ModelsHandler:
         except Exception as e:
             logger.error(f"[ModelsHandler] POST failed: {e}")
             return json.dumps({"status": "error", "message": str(e)})
+
+    @staticmethod
+    def _handle_codex_setup(action: str) -> str:
+        from models.codex.web_login import codex_setup
+
+        web.header("Cache-Control", "no-store")
+        content_type = (web.ctx.env.get("CONTENT_TYPE") or "").split(";", 1)[0].strip().lower()
+        if content_type != "application/json":
+            return json.dumps({"status": "error", "message": "Expected application/json."})
+        if not _is_password_enabled() and not _is_loopback_request():
+            return json.dumps({"status": "error", "message_key": "models_codex_requires_password"})
+        return json.dumps({"status": "success", **codex_setup.dispatch(action)})
 
     def _dispatch_write_action(self, action: str, data: dict) -> str:
         """The POST actions that persist config (all run under the save lock)."""
@@ -2479,7 +2495,7 @@ class ModelsHandler:
         if provider_id == const.CODEX:
             available = provider_model_names(provider_id)
             if not available:
-                return json.dumps({"status": "error", "message": "Run 'cow codex login' on the CowAgent host."})
+                return json.dumps({"status": "error", "message": "Sign in to Codex from the Models console or run 'cow codex login'."})
             model = model or available[0]
 
         applied = {}

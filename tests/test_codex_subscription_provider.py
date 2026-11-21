@@ -87,7 +87,7 @@ def _fake_server(monkeypatch, tmp_path, account_type="chatgpt"):
     real_popen = subprocess.Popen
     children = []
     monkeypatch.setattr(app_server, "codex_home", lambda: tmp_path)
-    monkeypatch.setattr(app_server.shutil, "which", lambda name: sys.executable)
+    monkeypatch.setattr(app_server, "find_codex", lambda home: sys.executable)
     monkeypatch.setenv("OPENAI_API_KEY", "must-not-enter-codex")
     monkeypatch.setenv("OPENAI_BASE_URL", "must-not-enter-codex")
     monkeypatch.setenv("CODEX_HOME", "must-not-use-personal-codex-home")

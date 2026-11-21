@@ -12,17 +12,37 @@ def codex():
 
 
 @codex.command()
-@click.option("--browser", is_flag=True, help="Use a local browser instead of a device code.")
-def login(browser):
-    """Sign in with ChatGPT on this CowAgent host."""
-    from common.i18n import t
-    from models.codex.app_server import CodexError, refresh_models, run_auth_command
+def install():
+    """Install the official Codex CLI for this CowAgent instance."""
+    from models.codex.app_server import codex_home
+    from models.codex.install import InstallError, install_codex
 
     try:
+        click.echo(install_codex(codex_home()))
+    except (InstallError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+@codex.command()
+@click.option("--browser", is_flag=True, help="Use a local browser instead of a device code.")
+@click.option("-y", "--yes", is_flag=True, help="Install Codex automatically if it is missing.")
+def login(browser, yes):
+    """Sign in with ChatGPT on this CowAgent host."""
+    from common.i18n import t
+    from models.codex.app_server import CodexError, codex_home, refresh_models, run_auth_command
+    from models.codex.install import InstallError, find_codex, install_codex
+
+    try:
+        home = codex_home()
+        if not find_codex(home):
+            if not yes:
+                click.confirm(t("未找到 Codex CLI。现在一键安装？", "Codex CLI is missing. Install it now?"), abort=True)
+            click.echo(t("正在安装官方 Codex CLI…", "Installing the official Codex CLI…"))
+            install_codex(home)
         if run_auth_command("login", *([] if browser else ["--device-auth"])):
             raise click.ClickException("Codex login failed.")
         models = refresh_models()
-    except (CodexError, OSError) as exc:
+    except (CodexError, InstallError, OSError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(t(
         f"已同步 {len(models)} 个 Codex 模型。请在网页的「模型」中选择 Codex (ChatGPT)。",

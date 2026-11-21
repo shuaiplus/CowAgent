@@ -5,12 +5,12 @@ import json
 import os
 from pathlib import Path
 from queue import Empty, Queue
-import shutil
 import subprocess
 from threading import Thread
 import time
 
 from common.atomic_write import write_json_atomic
+from models.codex.install import find_codex
 
 # Pass network and OS settings needed by the CLI. CowAgent's API keys and
 # Codex auth/backend overrides are deliberately left in the parent process.
@@ -23,7 +23,7 @@ _ENV_KEYS = {
 _AUTH_OPTIONS = ('-c', 'cli_auth_credentials_store="file"')
 _MODELS_CACHE = "cowagent-models.json"
 TOOL_NAMESPACE = "cowagent"
-LOGIN_REQUIRED = "Sign in with ChatGPT on the CowAgent host using 'cow codex login'."
+LOGIN_REQUIRED = "Sign in with ChatGPT in the Models console or run 'cow codex login'."
 
 
 class CodexError(RuntimeError):
@@ -39,10 +39,10 @@ def codex_home():
 
 
 def _launch_settings():
-    executable = shutil.which("codex")
-    if not executable:
-        raise CodexError("Install the official Codex CLI and make 'codex' available on PATH.", 503)
     home = codex_home()
+    executable = find_codex(home)
+    if not executable:
+        raise CodexError("Install Codex in the Models console or run 'cow codex install'.", 503)
     home.mkdir(mode=0o700, parents=True, exist_ok=True)
     env = {key: value for key, value in os.environ.items() if key.upper() in _ENV_KEYS}
     env["CODEX_HOME"] = str(home.resolve())
@@ -53,11 +53,15 @@ def run_auth_command(*args):
     executable, home, env = _launch_settings()
     result = subprocess.run([executable, *_AUTH_OPTIONS, *args], cwd=home, env=env)
     if result.returncode == 0:
-        try:
-            (home / _MODELS_CACHE).unlink()
-        except FileNotFoundError:
-            pass
+        clear_model_cache()
     return result.returncode
+
+
+def clear_model_cache():
+    try:
+        (codex_home() / _MODELS_CACHE).unlink()
+    except FileNotFoundError:
+        pass
 
 
 def cached_models():
@@ -153,15 +157,18 @@ class AppServer:
         except OSError as exc:
             raise CodexError("Codex App Server closed its input.") from exc
 
-    def receive(self):
+    def receive(self, *, wait=None):
         if self._turn_events:
             return self._turn_events.popleft()
-        return self._receive()
+        return self._receive(wait=wait)
 
-    def _receive(self):
+    def _receive(self, *, wait=None):
         try:
-            message = self._messages.get(timeout=max(0, self._deadline - time.monotonic()))
+            remaining = max(0, self._deadline - time.monotonic())
+            message = self._messages.get(timeout=remaining if wait is None else min(wait, remaining))
         except Empty as exc:
+            if wait is not None and time.monotonic() < self._deadline:
+                return None
             raise CodexError("Codex App Server timed out.", 504) from exc
         if not isinstance(message, dict):
             raise CodexError("Codex App Server exited or returned an invalid message. Check your Codex CLI version.")

@@ -2171,6 +2171,7 @@ function fillVendorModalForProvider(providerId) {
     document.getElementById('vendor-modal-title').textContent = localizedLabel(meta.label);
     document.getElementById('vendor-modal-subtitle').textContent = meta.id;
     const isCodex = providerId === 'codex';
+    stopCodexSetup();
     document.getElementById('vendor-modal-codex-login').classList.toggle('hidden', !isCodex);
     document.getElementById('vendor-modal-api-fields').classList.toggle('hidden', isCodex);
     document.getElementById('vendor-modal-catalog-wrap').classList.toggle('hidden', isCodex);
@@ -2179,6 +2180,7 @@ function fillVendorModalForProvider(providerId) {
     if (isCodex) {
         document.getElementById('vendor-modal-clear').classList.add('hidden');
         vendorModalState.providerId = providerId;
+        openCodexSetup();
         return;
     }
 
@@ -2304,7 +2306,114 @@ function syncVendorBasePresets(presets) {
 }
 
 function closeVendorModal() {
+    stopCodexSetup();
     document.getElementById('vendor-modal-overlay').classList.add('hidden');
+}
+
+let codexSetupEpoch = 0;
+let codexSetupTimer;
+
+function stopCodexSetup() {
+    codexSetupEpoch += 1;
+    clearTimeout(codexSetupTimer);
+    document.getElementById('codex-device-code').textContent = '';
+    document.getElementById('codex-device-link').removeAttribute('href');
+}
+
+function openCodexSetup() {
+    const status = document.getElementById('codex-setup-status');
+    const connect = document.getElementById('codex-connect');
+    const refresh = document.getElementById('codex-refresh');
+    const disconnect = document.getElementById('codex-disconnect');
+    const cancel = document.getElementById('codex-cancel');
+    const device = document.getElementById('codex-device');
+    const code = document.getElementById('codex-device-code');
+    const link = document.getElementById('codex-device-link');
+    const epoch = codexSetupEpoch;
+    let operation = '';
+    const phases = {
+        starting: 'models_codex_starting',
+        installing: 'models_codex_installing',
+        waiting: 'models_codex_waiting',
+        canceling: 'models_codex_canceling',
+        refreshing: 'models_codex_refreshing',
+        signing_out: 'models_codex_signing_out',
+    };
+
+    function busy(phase) {
+        [connect, refresh, disconnect].forEach(button => button.classList.add('hidden'));
+        cancel.classList.toggle('hidden', phase !== 'waiting');
+        device.classList.toggle('hidden', phase !== 'waiting');
+        status.textContent = t(phases[phase] || 'models_codex_starting');
+    }
+
+    async function request(action, attempts = 0) {
+        if (epoch !== codexSetupEpoch) return;
+        if (action !== 'status') {
+            operation = action;
+            busy(action === 'cancel' ? 'canceling' : 'starting');
+        }
+        try {
+            const response = await fetch('/api/models', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'codex_' + action }),
+            });
+            const result = await response.json();
+            if (epoch !== codexSetupEpoch) return;
+            if (result.status !== 'success') {
+                status.textContent = result.message_key ? t(result.message_key) : (result.message || t('models_save_failed'));
+                return;
+            }
+            if (phases[result.phase]) {
+                busy(result.phase);
+                if (result.phase === 'waiting') {
+                    code.textContent = result.user_code;
+                    link.href = result.verification_url;
+                    if (!operation) operation = 'login';
+                }
+                codexSetupTimer = setTimeout(() => request('status'), 1200);
+                return;
+            }
+            device.classList.add('hidden');
+            cancel.classList.add('hidden');
+            code.textContent = '';
+            link.removeAttribute('href');
+            const catalogChanged = result.models_ready !== !!modelsState.providers.find(p => p.id === 'codex')?.configured;
+            if (result.phase === 'idle' && ((operation && operation !== 'cancel') || catalogChanged)) {
+                const onSaved = result.models_ready && vendorModalState.onSaved;
+                closeVendorModal();
+                if (onSaved) onSaved('codex');
+                else loadModelsView({ preserveScroll: true });
+                return;
+            }
+            operation = '';
+            status.textContent = result.phase === 'error' ? result.message : t(
+                result.signed_in ? 'models_codex_connected' :
+                    result.installed ? 'models_codex_ready' : 'models_codex_missing'
+            );
+            connect.textContent = t(result.installed ? 'models_codex_sign_in' : 'models_codex_install_sign_in');
+            connect.classList.toggle('hidden', result.signed_in);
+            refresh.classList.toggle('hidden', !result.signed_in);
+            disconnect.classList.toggle('hidden', !result.signed_in);
+        } catch {
+            if (epoch !== codexSetupEpoch) return;
+            status.textContent = t('models_codex_connection_error');
+            if (attempts < 3) {
+                codexSetupTimer = setTimeout(() => request('status', attempts + 1), 1500);
+            }
+        }
+    }
+
+    connect.onclick = () => request('login');
+    refresh.onclick = () => request('refresh');
+    disconnect.onclick = () => request('logout');
+    cancel.onclick = () => {
+        clearTimeout(codexSetupTimer);
+        request('cancel');
+    };
+    busy('starting');
+    request('status');
 }
 
 // ---------- Model catalog editor (advanced, optional) -------------------

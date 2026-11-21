@@ -25,8 +25,26 @@
                     </div>
                 </div>
 
-                <p id="vendor-modal-codex-login" class="hidden text-sm text-slate-600 dark:text-slate-400"
-                   data-i18n="models_codex_login"></p>
+                <div id="vendor-modal-codex-login" class="hidden space-y-3 text-sm">
+                    <p id="codex-setup-status" class="text-slate-600 dark:text-slate-400" role="status"></p>
+                    <div id="codex-device" class="hidden rounded-lg bg-slate-50 dark:bg-white/5 p-3 space-y-2">
+                        <p data-i18n="models_codex_device_help"></p>
+                        <code id="codex-device-code" class="block text-base font-semibold tracking-wide select-all"></code>
+                        <a id="codex-device-link" target="_blank" rel="noopener noreferrer"
+                           class="inline-block font-medium text-primary-500 hover:underline"
+                           data-i18n="models_codex_open"></a>
+                    </div>
+                    <div class="flex flex-wrap gap-3 items-center">
+                        <button type="button" id="codex-connect"
+                                class="rounded-lg bg-primary-600 hover:bg-primary-700 px-4 py-2 font-medium text-white"></button>
+                        <button type="button" id="codex-refresh" class="hidden text-primary-500 hover:underline"
+                                data-i18n="models_codex_refresh"></button>
+                        <button type="button" id="codex-disconnect" class="hidden text-slate-600 dark:text-slate-400 hover:underline"
+                                data-i18n="models_codex_logout"></button>
+                        <button type="button" id="codex-cancel" class="hidden text-slate-600 dark:text-slate-400 hover:underline"
+                                data-i18n="models_codex_cancel"></button>
+                    </div>
+                </div>
 
                 <div id="vendor-modal-api-fields" class="space-y-4">
                     <div>

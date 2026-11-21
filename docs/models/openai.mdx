@@ -35,18 +35,29 @@ your ChatGPT account's Codex allowance for chat. It uses the official Codex
 App Server over standard input and output. CowAgent handles conversation
 history and executes its own tools under the existing permission settings.
 
-1. Install or update the [official Codex CLI](https://developers.openai.com/codex/cli)
-   on the host running CowAgent. Make sure `codex` is on the service user's
-   `PATH`. The integration has been checked against Codex CLI 0.171.0.
-2. As the same OS user and with the same `COW_DATA_DIR` as the running CowAgent,
-   run `cow codex login`. Open the displayed URL and enter the device code with
-   the ChatGPT account you use for Codex. Enable device code authorization in
-   ChatGPT security settings if prompted. On a machine with a local browser you
-   can use `cow codex login --browser`.
-3. Open **Models → Chat** in the CowAgent console, choose **Codex (ChatGPT)**,
-   select a model from the synced list, and save. The same provider can also
-   be selected in an individual web conversation. The global choice applies
-   to channels such as WeChat.
+### Sign in from the web console
+
+Open **Models → Chat → Codex (ChatGPT)**. Click **Sign in with ChatGPT**, or
+**Install and sign in** when Codex CLI is missing. Follow the OpenAI link,
+enter the displayed device code and authorize with your ChatGPT account. The
+model list syncs automatically when you finish. Select a model and save.
+Use the provider dialog to sync the list again or sign out. Set a web access
+password to manage Codex from a remote console.
+
+### Sign in from the terminal
+
+Run `cow codex login` as the CowAgent service user with its usual
+`COW_DATA_DIR`. If the CLI is missing, confirm the installation prompt. Use
+`cow codex login --yes` to accept automatically or `cow codex install` to
+install without signing in. The installer verifies the official Codex
+0.171.0 release for Linux, macOS and Windows on x64 or ARM64 and keeps it in
+this CowAgent instance's data directory. It reuses an existing CLI if present.
+On a machine with a local browser you can also run `cow codex login --browser`.
+
+If OpenAI prompts you to enable device-code authorization, turn it on in
+ChatGPT security settings. The console and terminal use the same sign-in.
+The global model choice applies to channels such as WeChat. An individual
+web conversation can also select its own model.
 
 Use `cow codex status` to check sign-in, `cow codex models` to refresh the
 available model list, and `cow codex logout` to disconnect. Codex manages
