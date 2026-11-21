@@ -182,12 +182,13 @@ function renderVendorChip(p) {
         </button>`;
 }
 
-// Render a uniformly-styled logo for a provider. Tries an SVG asset first; if
+// Render a uniformly-styled logo for a provider. Tries a logo asset first; if
 // it 404s the <img> swaps itself for a monogram fallback via onerror.
 function renderProviderLogo(p, sizePx) {
     const initial = (localizedLabel(p.label) || p.id || '?').slice(0, 1).toUpperCase();
     const sz = sizePx || 32;
-    const url = `${MODELS_PROVIDER_LOGO_PATH}/${encodeURIComponent(p.id)}.svg`;
+    const extension = p.id === 'codex' ? 'png' : 'svg';
+    const url = `${MODELS_PROVIDER_LOGO_PATH}/${encodeURIComponent(p.id)}.${extension}`;
     const fallbackId = `pl-${p.id}-${Math.random().toString(36).slice(2, 8)}`;
     const imgClass = MODELS_PROVIDER_LOGO_DARK_INVERT.has(p.id)
         ? 'absolute inset-0 m-auto provider-logo-img provider-logo-invert-dark'
@@ -2169,13 +2170,16 @@ function fillVendorModalForProvider(providerId) {
     const meta = modelsState.providers.find(p => p.id === providerId);
     if (!meta) return;
     document.getElementById('vendor-modal-title').textContent = localizedLabel(meta.label);
-    document.getElementById('vendor-modal-subtitle').textContent = meta.id;
     const isCodex = providerId === 'codex';
+    document.getElementById('vendor-modal-subtitle').textContent = isCodex ? t('models_codex_subscription') : meta.id;
+    document.getElementById('vendor-modal-key-icon').classList.toggle('hidden', isCodex);
+    document.getElementById('vendor-modal-codex-icon').classList.toggle('hidden', !isCodex);
     stopCodexSetup();
     document.getElementById('vendor-modal-codex-login').classList.toggle('hidden', !isCodex);
     document.getElementById('vendor-modal-api-fields').classList.toggle('hidden', isCodex);
     document.getElementById('vendor-modal-catalog-wrap').classList.toggle('hidden', isCodex);
-    document.getElementById('vendor-modal-save').classList.toggle('hidden', isCodex);
+    document.getElementById('vendor-modal-api-footer').classList.toggle('hidden', isCodex);
+    document.getElementById('vendor-modal-codex-footer').classList.toggle('hidden', !isCodex);
 
     if (isCodex) {
         document.getElementById('vendor-modal-clear').classList.add('hidden');
@@ -2316,12 +2320,17 @@ let codexSetupTimer;
 function stopCodexSetup() {
     codexSetupEpoch += 1;
     clearTimeout(codexSetupTimer);
-    document.getElementById('codex-device-code').textContent = '';
+    document.getElementById('codex-device-code').value = '';
     document.getElementById('codex-device-link').removeAttribute('href');
 }
 
 function openCodexSetup() {
     const status = document.getElementById('codex-setup-status');
+    const statusIcon = document.getElementById('codex-status-icon');
+    const catalog = document.getElementById('codex-models');
+    const list = document.getElementById('codex-model-list');
+    const modelCount = document.getElementById('codex-model-count');
+    const copy = document.getElementById('codex-copy');
     const connect = document.getElementById('codex-connect');
     const refresh = document.getElementById('codex-refresh');
     const disconnect = document.getElementById('codex-disconnect');
@@ -2340,11 +2349,30 @@ function openCodexSetup() {
         signing_out: 'models_codex_signing_out',
     };
 
+    function showStatusLine(message, iconClass) {
+        status.textContent = message;
+        statusIcon.className = 'fas flex-shrink-0 ' + iconClass;
+    }
+
     function busy(phase) {
         [connect, refresh, disconnect].forEach(button => button.classList.add('hidden'));
-        cancel.classList.toggle('hidden', phase !== 'waiting');
-        device.classList.toggle('hidden', phase !== 'waiting');
-        status.textContent = t(phases[phase] || 'models_codex_starting');
+        const waiting = phase === 'waiting';
+        cancel.classList.toggle('hidden', !waiting);
+        device.classList.toggle('hidden', !waiting);
+        link.classList.toggle('hidden', !waiting);
+        showStatusLine(t(phases[phase] || 'models_codex_starting'),
+            waiting ? 'fa-hourglass-half text-primary-500' : 'fa-circle-notch fa-spin text-slate-400');
+    }
+
+    function showModels(models) {
+        modelCount.textContent = String(models.length);
+        catalog.classList.toggle('hidden', !models.length);
+        list.replaceChildren(...models.map(model => {
+            const row = document.createElement('li');
+            row.className = 'px-3 py-2 break-all font-mono text-xs text-slate-700 dark:text-slate-200';
+            row.textContent = model;
+            return row;
+        }));
     }
 
     async function request(action, attempts = 0) {
@@ -2362,13 +2390,15 @@ function openCodexSetup() {
             const result = await response.json();
             if (epoch !== codexSetupEpoch) return;
             if (result.status !== 'success') {
-                status.textContent = result.message_key ? t(result.message_key) : (result.message || t('models_save_failed'));
+                showStatusLine(result.message_key ? t(result.message_key) : (result.message || t('models_save_failed')),
+                    'fa-circle-exclamation text-red-500');
                 return;
             }
             if (phases[result.phase]) {
                 busy(result.phase);
                 if (result.phase === 'waiting') {
-                    code.textContent = result.user_code;
+                    if (code.value !== result.user_code) copy.textContent = t('config_api_copy');
+                    code.value = result.user_code;
                     link.href = result.verification_url;
                     if (!operation) operation = 'login';
                 }
@@ -2377,34 +2407,58 @@ function openCodexSetup() {
             }
             device.classList.add('hidden');
             cancel.classList.add('hidden');
-            code.textContent = '';
+            link.classList.add('hidden');
+            code.value = '';
             link.removeAttribute('href');
+            showModels(result.models || []);
             const catalogChanged = result.models_ready !== !!modelsState.providers.find(p => p.id === 'codex')?.configured;
-            if (result.phase === 'idle' && ((operation && operation !== 'cancel') || catalogChanged)) {
-                const onSaved = result.models_ready && vendorModalState.onSaved;
+            const done = result.phase === 'idle';
+            if (done && operation === 'login' && result.models_ready) {
+                const onSaved = vendorModalState.onSaved;
                 closeVendorModal();
                 if (onSaved) onSaved('codex');
                 else loadModelsView({ preserveScroll: true });
                 return;
             }
+            if (done && (catalogChanged || operation === 'refresh' || operation === 'logout')) {
+                loadModelsView({ preserveScroll: true });
+            }
+            if (!done) {
+                showStatusLine(result.message, 'fa-circle-exclamation text-red-500');
+            } else if (result.signed_in) {
+                showStatusLine(t(operation === 'refresh' ? 'models_codex_models_synced' : 'models_codex_connected'),
+                    'fa-circle-check text-primary-500');
+            } else {
+                showStatusLine(t(result.installed ? 'models_codex_ready' : 'models_codex_missing'),
+                    'fa-circle-info text-slate-400');
+            }
             operation = '';
-            status.textContent = result.phase === 'error' ? result.message : t(
-                result.signed_in ? 'models_codex_connected' :
-                    result.installed ? 'models_codex_ready' : 'models_codex_missing'
-            );
             connect.textContent = t(result.installed ? 'models_codex_sign_in' : 'models_codex_install_sign_in');
             connect.classList.toggle('hidden', result.signed_in);
             refresh.classList.toggle('hidden', !result.signed_in);
             disconnect.classList.toggle('hidden', !result.signed_in);
         } catch {
             if (epoch !== codexSetupEpoch) return;
-            status.textContent = t('models_codex_connection_error');
+            showStatusLine(t('models_codex_connection_error'), 'fa-circle-exclamation text-red-500');
             if (attempts < 3) {
                 codexSetupTimer = setTimeout(() => request('status', attempts + 1), 1500);
             }
         }
     }
 
+    catalog.open = false;
+    showModels([]);
+    copy.textContent = t('config_api_copy');
+    copy.onclick = async () => {
+        try {
+            await copyToClipboard(code.value);
+            if (epoch === codexSetupEpoch) copy.textContent = t('models_codex_copied');
+        } catch {
+            code.focus();
+            code.select();
+        }
+    };
+    document.getElementById('codex-close').onclick = closeVendorModal;
     connect.onclick = () => request('login');
     refresh.onclick = () => request('refresh');
     disconnect.onclick = () => request('logout');

@@ -27,10 +27,11 @@ class CodexSetup:
 
     def _snapshot(self):
         home = codex_home()
+        models = cached_models()
         return {
             **self._state, "installed": bool(find_codex(home)),
             "signed_in": (home / "auth.json").is_file(),
-            "models_ready": bool(cached_models()),
+            "models_ready": bool(models), "models": models,
         }
 
     def _update(self, phase, **fields):

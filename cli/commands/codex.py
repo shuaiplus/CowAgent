@@ -45,8 +45,8 @@ def login(browser, yes):
     except (CodexError, InstallError, OSError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(t(
-        f"已同步 {len(models)} 个 Codex 模型。请在网页的「模型」中选择 Codex (ChatGPT)。",
-        f"Synced {len(models)} Codex models. Select Codex (ChatGPT) on the web Models page.",
+        f"已同步 {len(models)} 个 Codex 模型。请在网页的「模型」中选择 Codex。",
+        f"Synced {len(models)} Codex models. Select Codex on the web Models page.",
     ))
 
 

@@ -84,7 +84,7 @@ PROVIDER_MODELS = OrderedDict([
         "models": [const.GPT_62_SOL, const.GPT_62_ASTRA, const.GPT_61_TERRA, const.GPT_61_SOL, const.GPT_6_LUNA, const.GPT_6_SOL, const.GPT_6_ASTRA, const.GPT_56_LUNA, const.GPT_56_TERRA, const.GPT_56_SOL, const.GPT_55, const.GPT_54, const.GPT_54_MINI, const.GPT_54_NANO, const.GPT_5, const.GPT_41, const.GPT_4o],
     }),
     (const.CODEX, {
-        "label": "Codex (ChatGPT)",
+        "label": "Codex",
         "api_key_field": None,
         "api_base_key": None,
         "api_base_default": "",
