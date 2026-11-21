@@ -861,7 +861,6 @@ function switchConfigTab(tab) {
     if (tab === 'models') loadModelsView();
     if (tab === 'integrations') loadIntegrationsView();
     if (tab === 'environment') loadEnvView();
-    else clearEnvEditor();
     if (tab === 'devices') loadDevicesView();
     else stopDevicesView();
     // Re-pull /config when returning to Basic: a provider added on the Models

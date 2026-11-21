@@ -317,4 +317,5 @@ async function copyEnvName(key) {
     catch (_) { envFeedback('env_error', true); }
 }
 
-document.addEventListener('visibilitychange', () => { if (document.hidden) clearEnvEditor(); });
+// Keep the draft in the form while switching tabs or apps; it is never stored
+// in browser storage and is cleared on cancel, successful save, or deletion.
