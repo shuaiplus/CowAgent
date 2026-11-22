@@ -64,11 +64,12 @@ from channel.web.api.openai_compat import (  # noqa: F401
 from channel.web.api.pages import (  # noqa: F401
     AssetsHandler, ChatHandler, HealthHandler, InstanceWorkerHandler, RootHandler,
 )
+from channel.web.api.phone import PHONE_URLS, PhoneAnswerHandler, PhonePollHandler  # noqa: F401
 from channel.web.api.scheduler import (  # noqa: F401
     SchedulerCreateHandler, SchedulerDeleteHandler, SchedulerHandler,
     SchedulerInstancesHandler, SchedulerRecipientsHandler,
     SchedulerRunDeleteHandler, SchedulerRunDetailHandler, SchedulerRunHandler,
-    SchedulerRunsHandler, SchedulerToggleHandler, SchedulerUpdateHandler,
+    SchedulerRunsHandler, SchedulerToggleHandler, SchedulerUpcomingHandler, SchedulerUpdateHandler,
 )
 from channel.web.api.sessions import (  # noqa: F401
     HistoryHandler, MessageDeleteHandler, PromptOptimizeHandler,
@@ -167,6 +168,7 @@ URLS = (
     '/api/weixin/qrlogin', 'WeixinQrHandler',
     '/api/feishu/register', 'FeishuRegisterHandler',
     '/api/tools', 'ToolsHandler',
+    *PHONE_URLS,
     '/api/mcp/servers', 'McpServersHandler',
     '/api/mcp/servers/test', 'McpServerTestHandler',
     '/api/skills', 'SkillsHandler',
@@ -185,6 +187,7 @@ URLS = (
     '/api/scheduler/runs/detail', 'SchedulerRunDetailHandler',
     '/api/scheduler/runs/delete', 'SchedulerRunDeleteHandler',
     '/api/scheduler/runs', 'SchedulerRunsHandler',
+    '/api/scheduler/upcoming', 'SchedulerUpcomingHandler',
     '/api/scheduler/run', 'SchedulerRunHandler',
     '/api/scheduler/toggle', 'SchedulerToggleHandler',
     '/api/scheduler/update', 'SchedulerUpdateHandler',

@@ -11,9 +11,15 @@ import {GestureHandlerRootView} from 'react-native-gesture-handler';
 import {SafeAreaProvider} from 'react-native-safe-area-context';
 import {ImageViewerHost} from './components/FileViews';
 import {PairLinkHost} from './components/PairFlow';
+import {PhoneHost} from './components/PhoneHost';
 import {useLangStore} from './i18n';
 import {navigationRef} from './navigation/ref';
+import {watchNotices} from './notify/notice';
+import {watchReplies} from './notify/replies';
 import {RootNavigator} from './navigation/RootNavigator';
+import {useScheduledDeliveries} from './scheduler/deliveries';
+import {listenForShares} from './share/incoming';
+import {useTaskReminders} from './scheduler/reminders';
 import {useServerStore} from './store/serverStore';
 import {paintNavigationBar, routeBackground} from './theme/systemBars';
 import {usePrefsStore, useTheme} from './theme/theme';
@@ -33,6 +39,9 @@ export default function App() {
     usePrefsStore.getState().hydrate();
     useLangStore.getState().hydrate();
     useServerStore.getState().hydrate();
+    listenForShares();
+    watchReplies();
+    watchNotices();
   }, []);
 
   useEffect(() => paintNavigationBar(barColor, t.isDark), [barColor, t.isDark]);
@@ -73,10 +82,19 @@ export default function App() {
           </NavigationContainer>
           <ImageViewerHost />
           {hydrated && <PairLinkHost />}
+          {hydrated && <PhoneHost />}
+          {hydrated && <SchedulerWatch />}
         </React.Fragment>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
+}
+
+/** Scheduled deliveries shown as they land, and reminders handed to the system for when the app is away. */
+function SchedulerWatch() {
+  useScheduledDeliveries();
+  useTaskReminders();
+  return null;
 }
 
 const styles = StyleSheet.create({
