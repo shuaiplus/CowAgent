@@ -58,10 +58,11 @@ def run_auth_command(*args):
 
 
 def clear_model_cache():
-    try:
-        (codex_home() / _MODELS_CACHE).unlink()
-    except FileNotFoundError:
-        pass
+    for name in (_MODELS_CACHE, "cowagent-reasoning.json"):
+        try:
+            (codex_home() / name).unlink()
+        except FileNotFoundError:
+            pass
 
 
 def cached_models():
@@ -75,20 +76,45 @@ def cached_models():
     return [model for model in models if isinstance(model, str) and model] if isinstance(models, list) else []
 
 
+def cached_reasoning_capability(model):
+    """Read optional model capabilities captured during the last CLI sync."""
+    try:
+        data = json.loads((codex_home() / "cowagent-reasoning.json").read_text(encoding="utf-8"))
+        entry = data.get(model, {})
+        values = entry.get("values", [])
+        allowed = {"low", "medium", "high", "xhigh", "max", "ultra"}
+        values = [v for v in values if v in allowed]
+        if not values:
+            return None
+        default = entry.get("default")
+        return {"supported": True, "param": "reasoning_effort", "default": default if default in values else values[0],
+                "options": [{"value": v, "label": v} for v in values], "thinking_only": True}
+    except (OSError, ValueError, AttributeError, TypeError):
+        return None
+
+
 def refresh_models():
     """Refresh the public model slugs used by CowAgent's pickers."""
     with AppServer() as server:
         server.require_chatgpt()
         models = []
+        reasoning = {}
         cursor = None
         while True:
             page = server.request("model/list", {"cursor": cursor, "limit": 50, "modelProvider": "openai"})
             models.extend(entry["model"] for entry in page["data"] if not entry.get("hidden"))
+            for entry in page["data"]:
+                if not entry.get("hidden") and entry.get("model"):
+                    reasoning[entry["model"].lower()] = {
+                        "values": [v.get("reasoningEffort") for v in entry.get("supportedReasoningEfforts", []) if isinstance(v, dict)],
+                        "default": entry.get("defaultReasoningEffort"),
+                    }
             cursor = page.get("nextCursor")
             if not cursor:
                 break
     models = list(dict.fromkeys(models))
     write_json_atomic(codex_home() / _MODELS_CACHE, models)
+    write_json_atomic(codex_home() / "cowagent-reasoning.json", reasoning)
     return models
 
 

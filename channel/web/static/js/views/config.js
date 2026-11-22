@@ -449,7 +449,7 @@ function syncReasoningEffortOptions() {
     }
 
     // Effort only shapes a thinking pass, so the field follows the toggle.
-    if (!thinkingEl || !thinkingEl.checked || !options.length) {
+    if (!options.length || (!reasoning.thinking_only && (!thinkingEl || !thinkingEl.checked))) {
         wrap.classList.add('hidden');
         return;
     }
@@ -507,6 +507,10 @@ function saveModelConfig() {
     if (!model) return;
 
     const updates = { model: model };
+    const effortWrap = document.getElementById('cfg-reasoning-effort-wrap');
+    if (effortWrap && !effortWrap.classList.contains('hidden')) {
+        updates.reasoning_effort_by_model = { [`${cfgProviderValue}:${model.trim().toLowerCase()}`]: cfgReasoningEffortValue };
+    }
     const p = configProviders[cfgProviderValue];
     updates.use_linkai = (cfgProviderValue === 'linkai');
     if (cfgProviderValue === 'linkai') {
@@ -537,6 +541,7 @@ function saveModelConfig() {
     .then(data => {
         if (data.status === 'success') {
             configCurrentModel = model;
+            if (updates.reasoning_effort_by_model) Object.assign(configReasoningByModel, updates.reasoning_effort_by_model);
             if (data.applied) {
                 const keyInput = document.getElementById('cfg-api-key');
                 Object.entries(data.applied).forEach(([k, v]) => {
