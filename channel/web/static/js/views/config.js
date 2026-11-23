@@ -574,16 +574,11 @@ function saveModelConfig() {
 }
 
 function saveAgentConfig() {
-    const effortKey = `${cfgProviderValue}:${getSelectedModel().trim().toLowerCase()}`;
-    const mergedEffortByModel = Object.assign({}, configReasoningByModel, { [effortKey]: cfgReasoningEffortValue });
     const updates = {
         agent_max_context_tokens: parseInt(document.getElementById('cfg-max-tokens').value) || 0,
         agent_max_context_turns: parseInt(document.getElementById('cfg-max-turns').value) || 30,
         agent_max_steps: parseInt(document.getElementById('cfg-max-steps').value) || 100,
         enable_thinking: document.getElementById('cfg-enable-thinking').checked,
-        // Persist effort per model (merge with the existing map so other
-        // models' saved efforts survive the flat config save).
-        reasoning_effort_by_model: mergedEffortByModel,
         subagent_enabled: document.getElementById('cfg-subagent').checked,
         self_evolution_enabled: document.getElementById('cfg-self-evolution').checked,
     };
