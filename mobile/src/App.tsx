@@ -9,6 +9,7 @@ import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {StatusBar, StyleSheet} from 'react-native';
 import {GestureHandlerRootView} from 'react-native-gesture-handler';
 import {SafeAreaProvider} from 'react-native-safe-area-context';
+import {AppUpdateHost} from './components/AppUpdateHost';
 import {ImageViewerHost} from './components/FileViews';
 import {PairLinkHost} from './components/PairFlow';
 import {PhoneHost} from './components/PhoneHost';
@@ -16,6 +17,7 @@ import {useLangStore} from './i18n';
 import {navigationRef} from './navigation/ref';
 import {watchNotices} from './notify/notice';
 import {watchReplies} from './notify/replies';
+import {watchNotificationTaps} from './notify/taps';
 import {RootNavigator} from './navigation/RootNavigator';
 import {useScheduledDeliveries} from './scheduler/deliveries';
 import {listenForShares} from './share/incoming';
@@ -42,6 +44,7 @@ export default function App() {
     listenForShares();
     watchReplies();
     watchNotices();
+    watchNotificationTaps();
   }, []);
 
   useEffect(() => paintNavigationBar(barColor, t.isDark), [barColor, t.isDark]);
@@ -84,6 +87,7 @@ export default function App() {
           {hydrated && <PairLinkHost />}
           {hydrated && <PhoneHost />}
           {hydrated && <SchedulerWatch />}
+          {hydrated && <AppUpdateHost />}
         </React.Fragment>
       </SafeAreaProvider>
     </GestureHandlerRootView>

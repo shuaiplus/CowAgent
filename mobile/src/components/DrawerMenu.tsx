@@ -22,11 +22,11 @@ import {useLocalDeviceName} from '../kernel/localKernel';
 import {menuSections, type MenuEntry, type MenuRoute} from '../navigation/menuViews';
 import type {SessionItem} from '../protocol/events';
 import {useMenuStore} from '../store/menuStore';
-import {useOverviewStore} from '../store/overviewStore';
 import {activeServer, useLocalServer, useServerStore} from '../store/serverStore';
 import {useSessionStore} from '../store/sessionStore';
 import {radius} from '../theme/palette';
 import {makeStyles, useTheme} from '../theme/theme';
+import {useAgentVersion} from '../update/useAgentVersion';
 import {clockTime, shortTime} from '../utils/format';
 import {groupSessions} from '../utils/sessionGroups';
 import {Icon} from './Icon';
@@ -48,6 +48,7 @@ export function DrawerMenu({
   nested,
   onViewChange,
   currentSessionId,
+  activeSection,
   onNewChat,
   onOpenSession,
   onSessionActions,
@@ -61,6 +62,8 @@ export function DrawerMenu({
   nested: boolean;
   onViewChange: (view: DrawerView) => void;
   currentSessionId: string;
+  /** The page shown beside a sidebar, marked in the menu; none in the drawer, which covers it. */
+  activeSection?: string;
   onNewChat: () => void;
   onOpenSession: (session: SessionItem) => void;
   /** Long press on a conversation: pin, rename, delete. */
@@ -73,7 +76,7 @@ export function DrawerMenu({
   const t = useTheme();
   const styles = useStyles();
   const insets = useSafeAreaInsets();
-  const version = useOverviewStore(s => s.version);
+  const version = useAgentVersion();
   const realtime = useServerStore(s => s.realtimeStatus);
   const doc = useMenuStore(s => s.doc);
   const artifactsHidden = useMenuStore(s => s.artifactsHidden);
@@ -96,7 +99,8 @@ export function DrawerMenu({
   const renderEntry = (e: MenuEntry) => {
     if (e.kind === 'route') {
       const open = e.view === 'chat' ? () => onViewChange('sessions') : () => onNavigate(e.route);
-      return <Item key={e.key} icon={e.icon} label={e.label} onPress={open} />;
+      const active = !!activeSection && (e.view === 'chat' ? activeSection === 'Chat' : e.route === activeSection);
+      return <Item key={e.key} icon={e.icon} label={e.label} active={active} onPress={open} />;
     }
     if (e.kind === 'file') {
       const file = e.file;
@@ -169,7 +173,7 @@ export function DrawerMenu({
         ))}
       </ScrollView>
 
-      <View style={[styles.footer, {paddingBottom: insets.bottom + 10}]}>
+      <View style={[styles.footer, {paddingBottom: Math.max(insets.bottom, 8)}]}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={versionLabel}
