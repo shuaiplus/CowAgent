@@ -1,4 +1,4 @@
-import {I18nManager, Platform, Settings} from 'react-native';
+import {I18nManager, Platform} from 'react-native';
 import {create} from 'zustand';
 import {readJSON, writeJSON} from '../storage/kv';
 import {en, zh, type MessageKey} from './messages';
@@ -9,11 +9,14 @@ export type Lang = 'zh' | 'en';
 const DICTS: Record<Lang, Record<MessageKey, string>> = {zh, en};
 const LANG_KEY = 'lang';
 
+/** iOS only, and missing from react-native-web, where importing it by name stops the bundle loading. */
+const appleSettings = () => (require('react-native') as typeof import('react-native')).Settings;
+
 // The system's own language comes first: iOS reports the app's current locale as one of
 // the app's localizations, so a Chinese iPhone shows up as en_CN there and to Intl.
 const LOCALE_SOURCES: (() => unknown)[] = [
   () => (Platform.OS === 'web' ? navigator.language : undefined),
-  () => (Platform.OS === 'ios' ? Settings.get('AppleLanguages')?.[0] : undefined),
+  () => (Platform.OS === 'ios' ? appleSettings().get('AppleLanguages')?.[0] : undefined),
   () => (Platform.OS === 'android' ? I18nManager.getConstants?.().localeIdentifier : undefined),
   () => Intl.DateTimeFormat().resolvedOptions().locale,
 ];
@@ -39,6 +42,21 @@ export function systemLang(): Lang {
 
 let current: Lang = systemLang();
 
+/**
+ * UIKit's own text (the copy / paste menu, pickers) follows the app's language list, not
+ * ours, and only reads it at launch: the choice shows there from the next start on.
+ */
+function syncSystemLang(lang: Lang) {
+  if (Platform.OS !== 'ios') {
+    return;
+  }
+  try {
+    appleSettings().set({AppleLanguages: [lang === 'zh' ? 'zh-Hans' : 'en']});
+  } catch {
+    // Without the native settings module the system text simply keeps its language.
+  }
+}
+
 interface LangState {
   hydrated: boolean;
   lang: Lang;
@@ -54,6 +72,7 @@ export const useLangStore = create<LangState>(set => ({
     const saved = await readJSON<Lang | null>(LANG_KEY, null);
     if (saved === 'zh' || saved === 'en') {
       current = saved;
+      syncSystemLang(saved);
     }
     set({hydrated: true, lang: current});
   },
@@ -61,6 +80,7 @@ export const useLangStore = create<LangState>(set => ({
     current = lang;
     set({lang});
     writeJSON(LANG_KEY, lang).catch(() => undefined);
+    syncSystemLang(lang);
   },
 }));
 

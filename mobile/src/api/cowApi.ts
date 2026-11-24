@@ -20,6 +20,7 @@ import type {
   DeviceList,
   ExternalApiState,
   FallbackLink,
+  FolderListing,
   GlobalConfig,
   GuestShare,
   GuestShareConfig,
@@ -39,6 +40,7 @@ import type {
   ModelsState,
   PairedDevice,
   PairingCode,
+  ProjectState,
   QrPayload,
   ScheduledTask,
   SessionSettings,
@@ -53,12 +55,11 @@ import type {
   TaskRun,
   TaskSchedule,
   ToolInfo,
-  UpdateCheck,
-  UpdateStatus,
   UploadedFile,
   VersionInfo,
   VoiceReplyMode,
   WorkspaceHit,
+  WorkspaceListing,
   WorkspaceText,
 } from '../protocol/resources';
 import {appendFile, type PickedFile} from '../media/types';
@@ -244,6 +245,36 @@ export async function updateSessionSettings(
   });
 }
 
+export async function getProjects(sessionId: string, agentId?: string) {
+  return http.request<ProjectState>(`/api/projects?${query({session: sessionId, agent: agentId})}`);
+}
+
+/** null sends the session back to the Agent's own workspace. */
+export async function selectProject(sessionId: string, projectDir: string | null, agentId?: string) {
+  return http.request<ProjectState>('/api/projects/select', {
+    body: {session: sessionId, project_dir: projectDir, agent: agentId},
+  });
+}
+
+/** Creates the folder under the projects root and has the session work in it. */
+export async function createProject(sessionId: string, name: string, agentId?: string) {
+  return http.request<ProjectState>('/api/projects/create', {
+    body: {session: sessionId, name, agent: agentId},
+  });
+}
+
+/** Sub-folders of `path` on the server's computer; an empty path starts at its home folder. */
+export async function browseFolders(path = '') {
+  return http.request<FolderListing>(`/api/projects/browse?${query({path})}`);
+}
+
+/** One folder level, rooted where the session works; an empty path is that root. */
+export async function getWorkspaceTree(path: string, sessionId: string, agentId?: string) {
+  return http.request<WorkspaceListing>(
+    `/api/workspace/tree?${query({path, session: sessionId, agent_id: agentId})}`,
+  );
+}
+
 const sessionPath = (sessionId: string, tail: string) =>
   `/api/sessions/${encodeURIComponent(sessionId)}/${tail}`;
 
@@ -331,18 +362,6 @@ export function agentAvatarUrl(agent: {id: string; avatar_rev?: string}): string
 
 export async function getVersion() {
   return http.request<VersionInfo>('/api/version');
-}
-
-export async function checkForUpdate() {
-  return http.request<UpdateCheck>('/api/update/check', {body: {}, timeoutMs: 30_000});
-}
-
-export async function startUpdate() {
-  return http.request<{update: UpdateStatus}>('/api/update/start', {body: {}});
-}
-
-export async function getUpdateStatus() {
-  return http.request<UpdateStatus>('/api/update/status');
 }
 
 export async function getConfig() {
@@ -921,6 +940,27 @@ export async function resolveWorkspacePath(path: string, sessionId?: string, age
   return http.request<{status: string; file?: WorkspaceEntry; message?: string}>(
     `/api/workspace/resolve?${query({path, session: sessionId, agent: agentId})}`,
   );
+}
+
+/**
+ * Removes a stored turn. `cascade` also drops every turn that came after it,
+ * which is what an edit needs before the message is sent again.
+ */
+export async function deleteMessages(
+  sessionId: string,
+  userSeq: number,
+  opts: {deleteUser?: boolean; cascade?: boolean} = {},
+  agentId?: string | null,
+) {
+  return http.request<{status: string; deleted?: number}>('/api/messages/delete', {
+    body: {
+      session_id: sessionId,
+      user_seq: userSeq,
+      delete_user: opts.deleteUser ?? true,
+      cascade: !!opts.cascade,
+      agent_id: agentId || undefined,
+    },
+  });
 }
 
 export async function cancelRequest(requestId: string, sessionId: string) {

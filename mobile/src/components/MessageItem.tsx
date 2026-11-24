@@ -9,12 +9,15 @@ import {
   faHourglassHalf,
   faLightbulb,
   faMinus,
+  faPenToSquare,
+  faRotateRight,
   faShare,
   faStop,
   faXmark,
 } from '@fortawesome/free-solid-svg-icons';
 import React, {memo, useEffect, useState} from 'react';
 import {ActivityIndicator, Image, Platform, Pressable, ScrollView, Text, View} from 'react-native';
+import {GestureDetector} from 'react-native-gesture-handler';
 import Animated, {
   cancelAnimation,
   Easing,
@@ -42,6 +45,7 @@ import {serverFileUrl} from '../api/cowApi';
 import {type ChatFile, sameFile} from '../files/chatFile';
 import {openFileRef, useImageViewer} from '../files/openFile';
 import {copyText} from '../utils/clipboard';
+import {markdownText} from '../utils/markdownText';
 import {AgentAvatar} from './AgentAvatar';
 import {KindTile} from './ArtifactStrip';
 import {Dots} from './Dots';
@@ -50,6 +54,7 @@ import {Icon} from './Icon';
 import {RowToggleContext, useAnchoredRow, useRowToggle} from './listAnchor';
 import {Markdown} from './Markdown';
 import {PhoneTrust} from './PhoneTrust';
+import {useSelectText} from './SelectTextSheet';
 import {showToast} from './Toast';
 
 const MONO = Platform.select({ios: 'Menlo', default: 'monospace'});
@@ -70,6 +75,8 @@ function MessageItemImpl({
   labelled,
   newest,
   onOpenContext,
+  onRetry,
+  onEdit,
 }: {
   message: ChatMessage;
   labelled?: boolean;
@@ -77,9 +84,13 @@ function MessageItemImpl({
   newest?: boolean;
   /** Opens the conversation's context usage, from a reply's token count. */
   onOpenContext?: () => void;
+  /** Asks the stored turn behind a reply again. */
+  onRetry?: (message: ChatMessage) => void;
+  /** Drops this question and everything after it, to write it again. */
+  onEdit?: (message: ChatMessage) => void;
 }) {
   if (message.role === 'user') {
-    return <UserTurn message={message} />;
+    return <UserTurn message={message} onEdit={onEdit} />;
   }
   return (
     <AssistantTurn
@@ -87,6 +98,7 @@ function MessageItemImpl({
       labelled={!!labelled || !!message.peer}
       newest={!!newest}
       onOpenContext={onOpenContext}
+      onRetry={onRetry}
     />
   );
 }
@@ -94,19 +106,24 @@ function MessageItemImpl({
 const copyMessage = (text: string) =>
   copyText(text).then(ok => ok && showToast(tr('common_copied')));
 
-function CopyButton({text}: {text: string}) {
+/** A small icon action under a bubble, like the web console's message buttons. */
+function ActionButton({icon, label, onPress}: {icon: IconDefinition; label: string; onPress: () => void}) {
   const t = useTheme();
   const styles = useStyles();
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={tr('common_copy')}
+      accessibilityLabel={label}
       hitSlop={10}
-      onPress={() => copyMessage(text)}
+      onPress={onPress}
       style={({pressed}) => [styles.copy, pressed && styles.pressed]}>
-      <Icon icon={faCopy} size={11} color={t.t4} />
+      <Icon icon={icon} size={11} color={t.t4} />
     </Pressable>
   );
+}
+
+function CopyButton({text}: {text: string}) {
+  return <ActionButton icon={faCopy} label={tr('common_copy')} onPress={() => copyMessage(text)} />;
 }
 
 export const MessageItem = memo(MessageItemImpl);
@@ -114,12 +131,13 @@ export const MessageItem = memo(MessageItemImpl);
 /** The server copy of a picture the user sent, which the viewer shows and the save options fetch. */
 const sentImage = (a: MessageAttachment): ChatFile => ({name: a.name, kind: 'image', rawUrl: serverFileUrl(a.path)});
 
-function UserTurn({message}: {message: ChatMessage}) {
+function UserTurn({message, onEdit}: {message: ChatMessage; onEdit?: (message: ChatMessage) => void}) {
   const t = useTheme();
   const styles = useStyles();
   // Kept after closing so the sheet still has its file while it slides away.
   const [actingOn, setActingOn] = useState<ChatFile | null>(null);
   const [acting, setActing] = useState(false);
+  const selectText = useSelectText(() => message.content);
   const files = message.attachments ?? [];
   const images = files.filter(a => a.kind === 'image' && a.previewUri);
   const others = files.filter(a => !(a.kind === 'image' && a.previewUri));
@@ -175,20 +193,24 @@ function UserTurn({message}: {message: ChatMessage}) {
         </View>
       ) : (
         !!message.content && (
-          <View style={styles.userBubble}>
-            <Text selectable style={styles.userText}>
-              {message.content}
-            </Text>
-          </View>
+          <GestureDetector gesture={selectText.gesture}>
+            <View style={styles.userBubble}>
+              <Text style={styles.userText}>{message.content}</Text>
+            </View>
+          </GestureDetector>
         )
       )}
       {(!!message.createdAt || !!message.content) && !message.transcribing && (
         <View style={[styles.metaRow, styles.userMetaRow]}>
+          {message.seq !== undefined && onEdit && (
+            <ActionButton icon={faPenToSquare} label={tr('chat_edit')} onPress={() => onEdit(message)} />
+          )}
           {!!message.content && <CopyButton text={message.content} />}
           {!!message.createdAt && <Text style={styles.meta}>{clockTime(message.createdAt)}</Text>}
         </View>
       )}
       {actingOn && <FileSheet file={actingOn} visible={acting} onClose={() => setActing(false)} />}
+      {selectText.sheet}
     </View>
   );
 }
@@ -247,17 +269,20 @@ function AssistantTurn({
   labelled,
   newest,
   onOpenContext,
+  onRetry,
 }: {
   message: ChatMessage;
   labelled: boolean;
   newest: boolean;
   onOpenContext?: () => void;
+  onRetry?: (message: ChatMessage) => void;
 }) {
   const t = useTheme();
   const styles = useStyles();
   const speaker = useSpeaker(message.speaker);
   const row = useAnchoredRow(newest);
   const [showAll, setShowAll] = useState(false);
+  const selectText = useSelectText(() => markdownText(message.content));
   const steps = message.steps ?? [];
   const foldable = !message.streaming && steps.length > FOLD_AFTER;
   const folded = foldable && !showAll;
@@ -281,6 +306,8 @@ function AssistantTurn({
   const progress = `${message.content.length}:${steps.length}:${last ? stepSize(last) : 0}`;
   const stalled = useStalled(!!message.streaming && !waiting && !toolBusy, progress);
   const working = stalled && !liveThinking;
+  // Room for the dots stays for the whole reply: a pause in the stream must not move the page.
+  const dotsRoom = !!message.streaming && !waiting;
   const hasAnswer =
     !!message.content || !!files.length || !!message.cancelled || !!message.runState || !!message.error;
 
@@ -333,7 +360,13 @@ function AssistantTurn({
               </View>
             )}
 
-            {!!message.content && <Markdown value={message.content} inset={BUBBLE_INSET} />}
+            {!!message.content && (
+              <GestureDetector gesture={selectText.gesture}>
+                <View>
+                  <Markdown value={message.content} inset={BUBBLE_INSET} selectable={false} />
+                </View>
+              </GestureDetector>
+            )}
 
             {files.length > 0 && (
               <View style={[styles.files, !!message.content && styles.filesAfterText]}>
@@ -347,9 +380,9 @@ function AssistantTurn({
               </View>
             )}
 
-            {working && (
+            {dotsRoom && (
               <View style={styles.working}>
-                <Dots size={3} />
+                {working ? <Dots size={WORKING_DOT} /> : <View style={styles.workingIdle} />}
               </View>
             )}
 
@@ -373,9 +406,12 @@ function AssistantTurn({
             )}
             {!!message.error && <Text style={styles.error}>{message.error}</Text>}
           </View>
-          {!message.streaming && <MetaLine message={message} onOpenContext={onOpenContext} />}
+          {!message.streaming && (
+            <MetaLine message={message} onOpenContext={onOpenContext} onRetry={onRetry} />
+          )}
         </View>
       </View>
+      {selectText.sheet}
     </RowToggleContext.Provider>
   );
 }
@@ -389,6 +425,7 @@ function stepSize(step: Step): number {
 }
 
 const STALL_MS = 700;
+const WORKING_DOT = 3;
 
 /** True once `progress` has stood still for a moment while `active`. */
 function useStalled(active: boolean, progress: string): boolean {
@@ -578,6 +615,15 @@ const prettyArgs = (args: Record<string, unknown> | undefined) => {
   }
 };
 
+/** Code reads as code rather than as one JSON string full of \n. */
+function inputText(step: ToolStep): string {
+  const {code, ...rest} = step.args ?? {};
+  if (step.name !== 'python' || typeof code !== 'string') {
+    return prettyArgs(step.args);
+  }
+  return Object.keys(rest).length ? `${asText(code)}\n\n${prettyArgs(rest)}` : asText(code);
+}
+
 /** A JSON result laid out like the input above it; anything else as it came. */
 function prettyResult(result: string): string {
   const text = asText(result);
@@ -630,7 +676,7 @@ function ToolDetail({step}: {step: ToolStep}) {
     <View style={styles.toolDetail}>
       <View style={styles.section}>
         <Text style={styles.sectionLabel}>INPUT</Text>
-        <Pre text={prettyArgs(step.args)} />
+        <Pre text={inputText(step)} />
       </View>
 
       {!!step.substeps?.length && (
@@ -678,9 +724,18 @@ function SubStepRow({sub}: {sub: SubStep}) {
   );
 }
 
-function MetaLine({message, onOpenContext}: {message: ChatMessage; onOpenContext?: () => void}) {
+function MetaLine({
+  message,
+  onOpenContext,
+  onRetry,
+}: {
+  message: ChatMessage;
+  onOpenContext?: () => void;
+  onRetry?: (message: ChatMessage) => void;
+}) {
   const styles = useStyles();
   const u = message.usage;
+  const canRetry = message.userSeq !== undefined && !!onRetry;
   const total = u ? u.total_tokens ?? (u.prompt_tokens ?? 0) + (u.completion_tokens ?? 0) : 0;
   const parts: string[] = [];
   if (message.createdAt) {
@@ -692,7 +747,7 @@ function MetaLine({message, onOpenContext}: {message: ChatMessage; onOpenContext
       parts.push(trf('chat_cache_hit', {pct: Math.round((u.prompt_cache_hit_tokens * 100) / u.prompt_tokens)}));
     }
   }
-  if (!parts.length && !message.content) {
+  if (!parts.length && !message.content && !canRetry) {
     return null;
   }
   const label = parts.length > 0 && <Text style={styles.meta}>{parts.join(' · ')}</Text>;
@@ -711,6 +766,9 @@ function MetaLine({message, onOpenContext}: {message: ChatMessage; onOpenContext
         label
       )}
       {!!message.content && <CopyButton text={message.content} />}
+      {canRetry && (
+        <ActionButton icon={faRotateRight} label={tr('chat_retry')} onPress={() => onRetry(message)} />
+      )}
     </View>
   );
 }
@@ -799,6 +857,7 @@ const useStyles = makeStyles(t => {
     foldAction: {fontSize: 12, fontWeight: '500', color: t.accent},
     waiting: {paddingVertical: 6},
     working: {paddingTop: 8, paddingBottom: 2},
+    workingIdle: {height: WORKING_DOT},
     note: {paddingHorizontal: 2},
     sent: {marginLeft: 18, marginTop: 2, marginBottom: 2},
     files: {gap: 8},

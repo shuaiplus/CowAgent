@@ -1,5 +1,5 @@
 import {faComments} from '@fortawesome/free-regular-svg-icons';
-import {faArrowDown, faChevronDown, faPlus} from '@fortawesome/free-solid-svg-icons';
+import {faArrowDown, faChevronDown, faFolderTree, faPlus} from '@fortawesome/free-solid-svg-icons';
 import {useFocusEffect} from '@react-navigation/native';
 import type {StackScreenProps} from '@react-navigation/stack';
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
@@ -11,8 +11,8 @@ import {
   Platform,
   Pressable,
   Text,
-  TextInput,
   View,
+  type LayoutChangeEvent,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
@@ -30,10 +30,11 @@ import {
   PermissionSheet,
   type AttachSource,
 } from '../components/ComposerSheets';
-import {Dock} from '../components/Dock';
+import {Dock, type DockHandle} from '../components/Dock';
 import {DrawerMenu, type DrawerRoute, type DrawerView} from '../components/DrawerMenu';
 import {Icon} from '../components/Icon';
 import {Intro} from '../components/Intro';
+import {LinkBanner} from '../components/LinkBanner';
 import {ListShiftContext} from '../components/listAnchor';
 import {MessageItem} from '../components/MessageItem';
 import {ServerSheet} from '../components/ServerSheet';
@@ -46,9 +47,11 @@ import {TeamChatSheet} from '../components/TeamChatSheet';
 import {showToast, ToastHost} from '../components/Toast';
 import {Burger, IconButton} from '../components/ui';
 import {VoiceOverlay} from '../components/VoiceInput';
+import {WorkspaceSheet} from '../components/WorkspaceSheet';
 import type {ChatFile} from '../files/chatFile';
 import {openFile} from '../files/openFile';
 import {tr, trf} from '../i18n';
+import {LOCAL_SERVER_ID} from '../kernel/localKernel';
 import {canTakePhoto, pickDocuments, pickPhotos, takePhoto} from '../media/picker';
 import type {Recording} from '../media/types';
 import {linkAsPage} from '../navigation/menuViews';
@@ -57,12 +60,16 @@ import type {RootStackParamList} from '../navigation/types';
 import type {SessionItem} from '../protocol/events';
 import type {AgentBadge, PermissionMode, WorkspaceHit} from '../protocol/resources';
 import {agentParam, useAgentStore, useCurrentAgent} from '../store/agentStore';
+import {chatToResume, trackOpenChat} from '../store/chatResume';
 import {MAX_REPLYING, useChatStore, type ChatMessage} from '../store/chatStore';
 import {MAX_ATTACHMENTS, useComposerStore} from '../store/composerStore';
 import {useLayoutStore} from '../store/layoutStore';
+import {useLinkStore} from '../store/linkStore';
 import {useMenuStore} from '../store/menuStore';
 import {useOverviewStore} from '../store/overviewStore';
+import {useProjectStore} from '../store/projectStore';
 import {useSessionSettingsStore} from '../store/sessionSettingsStore';
+import {useServerStore} from '../store/serverStore';
 import {useSessionStore} from '../store/sessionStore';
 import {takeIncomingShare, useIncomingShare} from '../share/incoming';
 import {CHAT_WIDTH, PaneWidthProvider, usePaneWidth, useSidebarLayout} from '../theme/layout';
@@ -107,7 +114,20 @@ export function ChatScreen({route, navigation}: Props) {
   const settings = useSessionSettingsStore(s => s.bySession[sessionId]);
   const team = settings?.team;
   const teamSize = team?.members.length ?? 0;
-  const [draft, setDraft] = useState('');
+  const serverId = useServerStore(s => s.activeId);
+  // The kernel on this phone has no folders of a computer to work in, only its default workspace.
+  const remote = !!serverId && serverId !== LOCAL_SERVER_ID;
+  const projects = useProjectStore(s => s.bySession[sessionId]);
+  const [draft, setDraft] = useState(() => {
+    const resumed = chatToResume(useServerStore.getState().activeId);
+    return resumed?.sessionId === sessionId ? resumed.draft : '';
+  });
+  const unsent = !!isNew && !messages.length;
+  useEffect(() => {
+    if (serverId) {
+      trackOpenChat({serverId, sessionId, isNew: unsent, draft});
+    }
+  }, [serverId, sessionId, unsent, draft]);
   // On a wide screen the menu stays open beside the chat instead of sliding over it.
   const wide = useSidebarLayout();
   const paneWidth = usePaneWidth();
@@ -121,13 +141,15 @@ export function ChatScreen({route, navigation}: Props) {
   const [attachOpen, setAttachOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [permissionOpen, setPermissionOpen] = useState(false);
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [optimizing, setOptimizing] = useState(false);
   const [sessionOpen, setSessionOpen] = useState(false);
   const [contextOnly, setContextOnly] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [actingSession, setActingSession] = useState<SessionItem | null>(null);
-  const dock = useRef<TextInput>(null);
+  const dock = useRef<DockHandle>(null);
   // The keyboard covers the home indicator, so the composer sits right on it.
   const [keyboardShown, setKeyboardShown] = useState(false);
   useEffect(() => {
@@ -170,6 +192,26 @@ export function ChatScreen({route, navigation}: Props) {
     }
   }, [sessionId, isNew]);
 
+  // Whatever failed to load while the device was out of reach loads once it answers again.
+  const recovered = useLinkStore(s => s.recovered);
+  const reloadMissed = useRef(() => {});
+  reloadMissed.current = () => {
+    useAgentStore.getState().load().catch(() => undefined);
+    useMenuStore.getState().load().catch(() => undefined);
+    useSessionStore.getState().refresh();
+    useOverviewStore.getState().load().catch(() => undefined);
+    getModels().then(state => setModelMissing(!chatModelReady(state)), () => undefined);
+    useProjectStore.getState().load(sessionId, useAgentStore.getState().currentId).catch(() => undefined);
+    if (!isNew && !useChatStore.getState().messages[sessionId]?.length) {
+      useChatStore.getState().loadHistory(sessionId, useAgentStore.getState().currentId).catch(() => undefined);
+    }
+  };
+  useEffect(() => {
+    if (recovered) {
+      reloadMissed.current();
+    }
+  }, [recovered]);
+
   // Uploads are filed under the session they were picked in; never carry them over.
   useEffect(() => {
     useComposerStore.getState().clear();
@@ -185,6 +227,27 @@ export function ChatScreen({route, navigation}: Props) {
       loadSettings().catch(() => undefined);
     }
   }, [loadSettings, currentAgentId]);
+
+  const loadProjects = useCallback(
+    () => useProjectStore.getState().load(sessionId, useAgentStore.getState().currentId),
+    [sessionId],
+  );
+
+  // Until the server answers, or if it fails, the composer shows no folder button.
+  useEffect(() => {
+    if (currentAgentId) {
+      loadProjects().catch(() => undefined);
+    }
+  }, [loadProjects, currentAgentId]);
+
+  // Back from the model settings, the composer shows the model the chat now runs on.
+  useFocusEffect(
+    useCallback(() => {
+      if (useSessionSettingsStore.getState().bySession[sessionId]) {
+        loadSettings().catch(() => undefined);
+      }
+    }, [sessionId, loadSettings]),
+  );
 
   // A finished reply may have titled a new session or produced artifacts.
   const wasReplying = useRef(replying);
@@ -379,6 +442,26 @@ export function ChatScreen({route, navigation}: Props) {
     offsetRef.current = next;
     list.current?.scrollToOffset({offset: next, animated: false});
   }, []);
+  // A conversation shorter than the screen sits at its top (flex-end, inverted), so the newest row moves
+  // up as it grows. Keeping that row in place would scroll the page away and animate it back every chunk.
+  const [overflowing, setOverflowing] = useState(false);
+  const listHeight = useRef(0);
+  const contentHeight = useRef(0);
+  const checkOverflow = useCallback(() => setOverflowing(contentHeight.current > listHeight.current + 1), []);
+  const onListLayout = useCallback(
+    (e: LayoutChangeEvent) => {
+      listHeight.current = e.nativeEvent.layout.height;
+      checkOverflow();
+    },
+    [checkOverflow],
+  );
+  const onListContentSize = useCallback(
+    (_w: number, h: number) => {
+      contentHeight.current = h;
+      checkOverflow();
+    },
+    [checkOverflow],
+  );
   // The list is inverted, so its bottom is offset 0; wait a frame for the new bubble to be laid out.
   const toBottom = useCallback(() => {
     requestAnimationFrame(() => list.current?.scrollToOffset({offset: 0, animated: true}));
@@ -534,6 +617,8 @@ export function ChatScreen({route, navigation}: Props) {
     setAttachOpen(false);
     setModelOpen(false);
     setPermissionOpen(false);
+    setWorkspaceOpen(false);
+    setNewProjectOpen(false);
     setAgentSheetOpen(false);
     setServerSheetOpen(false);
     setTeamSheetOpen(false);
@@ -576,15 +661,17 @@ export function ChatScreen({route, navigation}: Props) {
     }
   }, [draft, messages]);
 
+  // Vendors and models may have changed since the settings were read, so they are read again.
   const openSettingsSheet = useCallback(
     (open: (v: boolean) => void) => {
       open(true);
-      if (!useSessionSettingsStore.getState().bySession[sessionId]) {
-        loadSettings().catch(e => {
+      const cached = !!useSessionSettingsStore.getState().bySession[sessionId];
+      loadSettings().catch(e => {
+        if (!cached) {
           open(false);
           showToast(trf('session_settings_load_failed', {error: errorText(e)}));
-        });
-      }
+        }
+      });
     },
     [sessionId, loadSettings],
   );
@@ -607,6 +694,41 @@ export function ChatScreen({route, navigation}: Props) {
         .getState()
         .setPermission(sessionId, useAgentStore.getState().currentId, mode)
         .catch(e => showToast(trf('composer_perm_switch_failed', {error: errorText(e)})));
+    },
+    [sessionId],
+  );
+
+  // Recent projects may have been opened from another device since they were read.
+  const openWorkspace = useCallback(() => {
+    setWorkspaceOpen(true);
+    loadProjects().catch(() => undefined);
+  }, [loadProjects]);
+
+  const selectWorkspace = useCallback(
+    (projectDir: string | null) => {
+      setWorkspaceOpen(false);
+      useProjectStore
+        .getState()
+        .select(sessionId, useAgentStore.getState().currentId, projectDir)
+        .catch(e => showToast(trf('composer_ws_switch_failed', {error: errorText(e)})));
+    },
+    [sessionId],
+  );
+
+  const openNewProject = useCallback(() => {
+    setWorkspaceOpen(false);
+    setTimeout(() => setNewProjectOpen(true), SHEET_DISMISS_MS);
+  }, []);
+
+  const createWorkspace = useCallback(
+    async (name: string) => {
+      if (!name) {
+        throw new Error(tr('composer_ws_name_required'));
+      }
+      if (/[/\\]/.test(name)) {
+        throw new Error(tr('composer_ws_name_no_slash'));
+      }
+      await useProjectStore.getState().create(sessionId, useAgentStore.getState().currentId, name);
     },
     [sessionId],
   );
@@ -729,11 +851,62 @@ export function ChatScreen({route, navigation}: Props) {
     setContextOnly(true);
     setSessionOpen(true);
   }, []);
+  // A reply's small button: the question behind it is asked again.
+  const retryMessage = useCallback(
+    (message: ChatMessage) => {
+      useChatStore
+        .getState()
+        .retry(sessionId, message.id, useAgentStore.getState().currentId)
+        .then(result => {
+          if (result === 'busy') {
+            showToast(
+              useChatStore.getState().active[sessionId]
+                ? tr('chat_busy_wait')
+                : trf('chat_too_many_replying', {n: MAX_REPLYING}),
+            );
+          } else if (result !== 'ok') {
+            showToast(tr('chat_action_unavailable'));
+          }
+        })
+        .catch(e => showToast(trf('chat_action_failed', {error: errorText(e)})));
+    },
+    [sessionId],
+  );
+  // A question's small button: it and every later turn go, and its text and files come back to the box.
+  const editMessage = useCallback(
+    (message: ChatMessage) => {
+      useChatStore
+        .getState()
+        .editMessage(sessionId, message.id, useAgentStore.getState().currentId)
+        .then(res => {
+          if (res.result === 'busy') {
+            showToast(tr('chat_busy_wait'));
+          } else if (res.result !== 'ok' || res.text === undefined) {
+            showToast(tr('chat_action_unavailable'));
+          } else {
+            setDraft(res.text);
+            if (res.attachments?.length) {
+              useComposerStore.getState().restore(res.attachments);
+            }
+            dock.current?.focus();
+          }
+        })
+        .catch(e => showToast(trf('chat_action_failed', {error: errorText(e)})));
+    },
+    [sessionId],
+  );
   const renderItem = useCallback(
     ({item, index}: {item: ChatMessage; index: number}) => (
-      <MessageItem message={item} labelled={shared} newest={index === 0} onOpenContext={openContext} />
+      <MessageItem
+        message={item}
+        labelled={shared}
+        newest={index === 0}
+        onOpenContext={openContext}
+        onRetry={retryMessage}
+        onEdit={editMessage}
+      />
     ),
-    [shared, openContext],
+    [shared, openContext, retryMessage, editMessage],
   );
   const empty = messages.length === 0;
   emptyRef.current = empty;
@@ -781,11 +954,22 @@ export function ChatScreen({route, navigation}: Props) {
             <Icon icon={faChevronDown} size={8} color={t.t3} />
           </Pressable>
           <View style={styles.topRight}>
+            {remote && (
+              <IconButton
+                icon={faFolderTree}
+                label={tr('composer_ws_title')}
+                onPress={() =>
+                  navigation.navigate('Workspace', {sessionId, agentId: agentParam(useAgentStore.getState().currentId)})
+                }
+                size={16}
+              />
+            )}
             {!empty && (
               <IconButton icon={faPlus} label={tr('session_new')} onPress={startNewChat} size={18} />
             )}
           </View>
         </View>
+        <LinkBanner />
 
         <AvoidKeyboard style={styles.body}>
           <PaneWidthProvider width={columnWidth}>
@@ -817,7 +1001,11 @@ export function ChatScreen({route, navigation}: Props) {
                     contentContainerStyle={[styles.list, styles.column]}
                     keyboardShouldPersistTaps="handled"
                     keyboardDismissMode="on-drag"
-                    maintainVisibleContentPosition={holding ? HOLD_POSITION : FOLLOW_POSITION}
+                    maintainVisibleContentPosition={
+                      overflowing ? (holding ? HOLD_POSITION : FOLLOW_POSITION) : undefined
+                    }
+                    onLayout={onListLayout}
+                    onContentSizeChange={onListContentSize}
                     onScroll={onListScroll}
                     scrollEventThrottle={32}
                   />
@@ -863,6 +1051,8 @@ export function ChatScreen({route, navigation}: Props) {
                 onOpenModel={() => openSettingsSheet(setModelOpen)}
                 permission={settings?.permission.mode}
                 onOpenPermission={() => openSettingsSheet(setPermissionOpen)}
+                project={remote ? projects?.current?.name ?? null : null}
+                onOpenWorkspace={projects ? openWorkspace : undefined}
                 roster={roster}
                 defaultAgentId={defaultAgentId}
                 searchFiles={searchFiles}
@@ -942,6 +1132,25 @@ export function ChatScreen({route, navigation}: Props) {
           onClose={() => setPermissionOpen(false)}
           settings={settings}
           onSelect={selectPermission}
+        />
+        <WorkspaceSheet
+          visible={workspaceOpen}
+          onClose={() => setWorkspaceOpen(false)}
+          state={projects}
+          withProjects={remote}
+          onSelect={selectWorkspace}
+          onNew={openNewProject}
+        />
+        <FieldSheet
+          visible={newProjectOpen}
+          title={tr('composer_ws_new_title')}
+          placeholder={tr('composer_ws_new_placeholder')}
+          hint={projects ? trf('composer_ws_new_hint', {root: projects.projects_root}) : undefined}
+          describe={v => (/[/\\]/.test(v) ? {text: tr('composer_ws_name_no_slash'), tone: 'danger'} : null)}
+          allowEmpty={false}
+          submitLabel={tr('composer_ws_create')}
+          onSubmit={createWorkspace}
+          onClose={() => setNewProjectOpen(false)}
         />
         <SessionSheet
           visible={sessionOpen}
